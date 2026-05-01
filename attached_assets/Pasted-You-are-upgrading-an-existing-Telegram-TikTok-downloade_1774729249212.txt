@@ -1,0 +1,161 @@
+You are upgrading an existing Telegram TikTok downloader bot project on Replit.
+
+CRITICAL RULES:
+- This is NOT a new project
+- DO NOT rebuild from scratch
+- DO NOT remove any existing working functions
+- DO NOT break the current downloader behavior
+- DO NOT break current admin features
+- DO NOT redesign the whole architecture
+- KEEP the current command flow and downloader flow working
+- Only add safe, minimal, backward-compatible improvements
+- Existing logging, SQLite, downloader stability, temp file sending, anti-spam protections, admin tools, role system, analytics, and backup/export features must continue to work
+
+CURRENT TASK:
+Implement Batch 1 only:
+1. Cooldown system
+2. User UI polish with inline buttons
+
+MAIN GOAL:
+Improve the user-facing experience and add a 30-second cooldown between download requests, while keeping the current bot behavior stable and familiar.
+
+==================================================
+PART 1 — COOLDOWN SYSTEM
+==================================================
+
+REQUIRED:
+
+1. Add a per-user cooldown for download requests
+- Default cooldown: 30 seconds
+- This cooldown should apply to download/media requests, not necessarily every command
+- The cooldown should start after a request is completed or after a valid request is accepted, whichever is safer and simpler in the current architecture
+- Keep implementation safe and minimal
+
+2. Remaining time feedback
+- If a user sends another TikTok link before cooldown ends, reply with a clean message showing remaining seconds
+- Example:
+  "Please wait 18 seconds before sending another link."
+
+3. Premium/VIP-ready design
+- Do NOT implement premium now
+- But structure the cooldown logic so future premium/VIP users can bypass cooldown or have a different cooldown duration
+- Also allow owner/admin/support roles to bypass cooldown if appropriate
+
+4. Admin-panel-ready control foundation
+- Do NOT build full cooldown settings UI now unless minimal and safe
+- But structure the code so cooldown can later be controlled from admin panel / feature flags
+- Avoid hardcoding in a way that makes future control difficult
+
+5. Safety
+- Do not permanently block users
+- Cooldown must reset naturally
+- If a request fails, do not leave the user stuck forever
+- Logging must record cooldown triggers
+
+==================================================
+PART 2 — USER UI POLISH
+==================================================
+
+REQUIRED:
+
+1. Improve the /start experience
+- Keep the existing purpose and overall style
+- Make it cleaner and more user-friendly
+- Clearly explain what the bot does
+- Tell users to send a TikTok link
+
+2. Add inline buttons where appropriate
+Suggested buttons:
+- Help
+- My Status
+- How To Use
+- Back
+- Retry (only if safe and useful)
+Keep it simple and clean
+Do NOT overcomplicate the UI
+
+3. Help / usage section
+- Explain supported TikTok links
+- Explain simple usage
+- Explain that users should send one TikTok link at a time
+- Mention the cooldown briefly if appropriate
+
+4. My Status section
+- Show simple user info safely
+- Example:
+  - user ID
+  - role (if relevant and safe)
+  - cooldown status or last usage info if practical
+Do not expose sensitive internal details
+
+5. Improve invalid input message
+- If user sends non-TikTok text or unsupported input, reply clearly
+- Example:
+  "Please send a valid TikTok link."
+
+6. Improve processing message
+- When a valid TikTok link is received, show a short processing message if this fits current flow
+- Example:
+  "Processing your request..."
+
+7. Improve success/failure messages
+- Keep them short and clean
+- Never expose raw Python errors or internal logic
+
+8. Keep backward compatibility
+- Existing text command flow must still work
+- Existing downloader behavior must still work
+- Existing admin commands must still work
+
+==================================================
+PART 3 — IMPLEMENTATION STYLE
+==================================================
+
+REQUIRED:
+
+1. Use minimal structural changes
+- Prefer updating existing files
+- Only add small helper functions if clearly useful
+
+2. Use current database/role system safely
+- Reuse existing SQLite/database helpers if needed
+- Reuse existing role helpers if available
+
+3. Logging
+- Log:
+  - cooldown triggered
+  - request accepted
+  - request blocked due to cooldown
+  - /start used
+  - help/status buttons used
+  - processing message flow
+  - invalid input
+  - success/failure
+
+4. Inline button handlers
+- Add clean callback handlers if needed
+- Keep naming and routing simple
+
+5. Do not touch unrelated future systems
+- Do NOT implement referral now
+- Do NOT implement premium now
+- Do NOT implement monetization now
+- Do NOT implement force join now
+- Only make this batch future-ready where needed
+
+==================================================
+OUTPUT REQUIREMENTS
+==================================================
+
+At the end:
+- Show exactly which files were changed
+- Provide full updated code for changed files only
+- Explain exactly how the cooldown works
+- Explain exactly how the user UI works
+- Explain how to test everything manually in Replit
+- Keep everything copy-paste ready
+
+OUTPUT FORMAT:
+- Full updated code for changed files only
+- Minimal safe edits
+- Backward-compatible implementation

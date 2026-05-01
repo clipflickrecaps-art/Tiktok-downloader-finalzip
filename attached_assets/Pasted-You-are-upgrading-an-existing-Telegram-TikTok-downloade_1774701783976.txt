@@ -1,0 +1,79 @@
+You are upgrading an existing Telegram TikTok downloader bot on Replit.
+
+CRITICAL RULES:
+- This is NOT a new project
+- DO NOT rebuild from scratch
+- DO NOT remove any existing working functions
+- DO NOT break current user flow
+- DO NOT redesign the whole bot
+- KEEP the current commands and admin features working
+- Only perform Step 4 in this upgrade
+- This is a safe internal performance/stability improvement
+
+CURRENT STEP:
+Step 4 only — change media sending from in-memory handling to temporary file based handling.
+
+PROJECT CONTEXT:
+The bot is already running.
+Previous steps improved logging, SQLite storage, and downloader stability.
+Now improve file delivery performance and memory safety.
+
+MAIN GOAL:
+Reduce RAM usage and make sending video/audio more stable by downloading media to temporary files before sending them through Telegram.
+
+REQUIRED CHANGES:
+
+1. Add a temp media directory
+- Example: temp_media/
+- Auto-create it if missing
+
+2. Change current media handling
+- Do NOT keep the full media file only in memory if that is the current implementation
+- Download video/audio to a temporary file on disk first
+- Use a unique file name per request to avoid collisions
+
+3. Send media from the temporary file
+- Use Telegram send_video/send_audio with the temporary file
+- Keep the current behavior and captions/buttons as much as possible
+
+4. Cleanup logic
+- After successful sending, delete the temp file
+- If sending fails, still attempt to delete the temp file
+- Use safe cleanup with logging
+
+5. File size handling
+- Check downloaded file size before sending if appropriate
+- Preserve existing fallback logic if the bot currently sends a direct link when files are too large
+- Do not remove current size limit behavior
+
+6. Logging
+- Log:
+  - temp file creation
+  - temp download started
+  - temp download completed
+  - file size
+  - send success
+  - send failure
+  - cleanup success/failure
+
+7. Safety
+- Do not change unrelated admin features
+- Do not change visible bot style more than necessary
+- Keep old commands working
+- If temp file download fails, return a clean error message to the user
+
+8. Code style
+- Prefer minimal edits to the existing downloader/send logic
+- Reuse existing helpers if possible
+- Only add helper functions where clearly useful
+
+9. At the end:
+- show which files were changed
+- provide full updated code for changed files
+- explain exactly how to test manually in Replit
+- keep everything copy-paste ready
+
+OUTPUT FORMAT:
+- Full updated code for changed files only
+- Minimal safe edits
+- Backward-compatible implementation

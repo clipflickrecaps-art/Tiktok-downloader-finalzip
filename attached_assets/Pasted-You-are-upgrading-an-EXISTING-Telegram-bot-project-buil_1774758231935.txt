@@ -1,0 +1,241 @@
+You are upgrading an EXISTING Telegram bot project built with aiogram on Replit.
+
+CRITICAL RULES:
+- This is NOT a new project
+- DO NOT rebuild from scratch
+- DO NOT remove any existing working features
+- DO NOT break downloader logic, UI, referral system, logging, database, role system, admin system, feature flags, or threshold locks
+- KEEP all current architecture intact
+- Only EXTEND and IMPROVE safely
+
+==================================================
+BATCH 5 GOAL
+==================================================
+
+Implement the PREMIUM / VIP USER FLOW FOUNDATION and ADMIN PAYMENT CONTROL SYSTEM.
+
+IMPORTANT:
+This batch is still PREPARATION only.
+
+Premium/VIP must remain LOCKED until the bot reaches 1000 users.
+
+Do NOT fully activate premium purchase flow for normal users yet.
+Do NOT bypass threshold lock rules.
+
+==================================================
+PART 1 — USER-SIDE PREMIUM / VIP PAGE
+==================================================
+
+Add or improve a Premium / VIP page in the user UI.
+
+Requirements:
+- Keep current UI style and keyboard/menu structure
+- Add a Premium / VIP entry point only if safe and minimal
+- If user count is below 1000, show a locked / coming soon style page
+
+Show information such as:
+- current plan: Free
+- premium benefits (preview only)
+- premium currently locked until 1000 users
+- message like:
+  "Premium/VIP feature will be available after the bot reaches 1000 users."
+
+IMPORTANT:
+- Do NOT allow purchase/upgrade now if still locked
+- Do NOT expose fake active billing flow
+- Keep it informative and clean
+
+==================================================
+PART 2 — PREMIUM BENEFITS PREVIEW
+==================================================
+
+On the Premium / VIP page, safely preview future benefits:
+
+- no ads
+- no cooldown or lower cooldown
+- higher daily quota
+- premium priority / smoother experience
+
+IMPORTANT:
+- These are preview benefits only for now
+- Do NOT activate them yet
+
+==================================================
+PART 3 — ADMIN PAYMENT ACCOUNT MANAGEMENT
+==================================================
+
+Add admin-panel-only payment account management.
+
+Allow admin/owner to:
+- add payment account
+- edit payment account
+- remove payment account
+- list payment accounts
+
+Suggested fields:
+- method_name
+- account_name
+- account_number
+- note/instructions
+- is_active
+
+Examples:
+- Wave Pay
+- KPay
+- KBZ Pay
+- AYA Pay
+
+Use SQLite and keep it modular.
+
+==================================================
+PART 4 — PREMIUM PLAN MANAGEMENT
+==================================================
+
+Add admin-panel-only premium plan management.
+
+Allow admin/owner to:
+- create premium plan
+- edit premium plan
+- enable/disable premium plan
+- list premium plans
+
+Suggested fields:
+- id
+- plan_name
+- duration_days
+- price
+- currency
+- is_active
+- created_at
+- updated_at
+
+Examples:
+- 1 Day Premium
+- 7 Days Premium
+- 30 Days Premium
+- Custom Plan
+
+IMPORTANT:
+- This is admin-side preparation
+- Do NOT fully activate public purchase flow now
+
+==================================================
+PART 5 — PREMIUM STATUS FOUNDATION
+==================================================
+
+Use the premium foundation from previous batch.
+
+Support:
+- is_premium(user_id)
+- get_premium_status(user_id)
+- premium_expires_at
+- plan_name
+
+User-facing premium status page should safely show:
+- current plan
+- premium active or not
+- expiry date if active
+- locked status if feature not enabled yet
+
+==================================================
+PART 6 — THRESHOLD LOCK RULE (CRITICAL)
+==================================================
+
+Premium/VIP must remain locked until 1000 users.
+
+Requirements:
+- If below 1000 users, admin may manage plans/accounts internally
+- But normal users must not activate premium yet
+- If premium_enabled flag is OFF or threshold not met, user page must stay locked
+
+Admin panel should show:
+- total users
+- premium threshold status
+- whether premium is locked / eligible / enabled
+
+==================================================
+PART 7 — ADMIN PANEL CONTROL ONLY
+==================================================
+
+All premium settings must be controlled only from the admin panel bot.
+
+Examples:
+- premium_enabled
+- plans
+- payment accounts
+- premium grants/revokes
+- benefit settings preview
+
+Normal users must not control these settings.
+
+==================================================
+PART 8 — FUTURE ACTIVATION PREPARATION
+==================================================
+
+Prepare safe helper structure so that after 1000 users:
+- premium can be enabled
+- plans can be shown to users
+- payment instructions can be shown
+- admin can approve premium manually
+- premium users can bypass ads/cooldown
+
+But DO NOT activate this full flow now.
+
+==================================================
+PART 9 — UI / NAVIGATION SAFETY
+==================================================
+
+- Do NOT break current ReplyKeyboard or main menu flow
+- Add Premium/VIP page safely only if it fits
+- Keep Main Menu working
+- Keep Guide / Status / Referral working
+- Do NOT break downloader flow
+
+==================================================
+PART 10 — LOGGING
+==================================================
+
+Log:
+- payment account created/edited/deleted
+- premium plan created/edited/deleted
+- premium page opened
+- threshold lock checked
+- admin tried to access premium controls
+- premium user status viewed
+
+==================================================
+PART 11 — SAFETY RULES
+==================================================
+
+- Do NOT activate premium for users automatically
+- Do NOT break current cooldown
+- Do NOT break current downloader flow
+- Do NOT break current referral system
+- Do NOT bypass threshold rules
+- Keep backward compatibility
+
+==================================================
+OUTPUT REQUIREMENTS
+==================================================
+
+- Show only changed files
+- Provide full updated code for changed files only
+- Keep modular structure
+- Explain:
+
+1. How premium page works
+2. How premium remains locked below 1000 users
+3. How admin manages payment accounts
+4. How admin manages premium plans
+5. How the future premium activation path is prepared
+
+==================================================
+TEST CASES
+==================================================
+
+1. User opens Premium page below 1000 users → sees locked/coming soon
+2. Admin adds payment account → saved successfully
+3. Admin adds premium plan → saved successfully
+4. Admin sees premium threshold status
+5. Current downloader still works normally
+6. Current referral/UI/cooldown still works

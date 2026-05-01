@@ -1,0 +1,218 @@
+You are upgrading an EXISTING Telegram bot project built with aiogram on Replit.
+
+CRITICAL RULES:
+- This is NOT a new project
+- DO NOT rebuild from scratch
+- DO NOT remove any existing working functions
+- DO NOT break the current downloader behavior
+- DO NOT break current admin panel behavior
+- DO NOT change the whole architecture unnecessarily
+- DO NOT delete current commands, handlers, downloader logic, database logic, logging, role system, analytics, backup/export, or current admin tools
+- KEEP the current bot running behavior stable
+- Only EXTEND and POLISH the existing project safely
+
+IMPORTANT PROJECT STATE:
+This bot is already running and already has:
+- downloader logic
+- admin system
+- logging and error handling
+- SQLite storage
+- temp file sending
+- anti-spam / safer request control foundation
+- admin UX improvements
+- user UX improvements
+- analytics / history / backup-export
+- multi-admin / role system
+
+Your task is ONLY to improve the USER UI for Batch 1 safely, while preserving all current working systems.
+
+==================================================
+BATCH 1 GOAL
+==================================================
+
+Upgrade the existing user UI into a cleaner, more professional Telegram bot interface for a Myanmar audience, while keeping all current features working.
+
+Focus on:
+- better /start experience
+- cleaner user guidance
+- inline buttons
+- better navigation
+- cooldown-friendly UI
+- future-ready screens
+
+DO NOT remove or replace existing core logic unless absolutely necessary.
+Prefer minimal edits.
+
+==================================================
+VERY IMPORTANT FUTURE THRESHOLD RULES
+==================================================
+
+These future systems are planned, but they must NOT be fully enabled now:
+
+- Force Join → enable only after 500 users
+- Premium / VIP → enable only after 1000 users
+- Business Layer → enable only after 1000 users
+- Pro Features → enable only after 1000 users
+- Option B (ads system) → enable only after 1000 users
+- Option C (sponsor/task system) → enable only after 5000 users
+
+IMPORTANT:
+- DO NOT activate these systems now
+- DO NOT expose them as usable features
+- Only prepare UI placeholders
+- All control must remain in admin panel
+
+==================================================
+PART 1 — START MESSAGE
+==================================================
+
+Upgrade /start message in Myanmar language:
+
+👋 မင်္ဂလာပါ! TikTok Downloader Bot
+
+🔥 Watermark မပါတဲ့ TikTok Video Download
+🎵 Audio / MP3 Extract
+⚡ လွယ်ကူမြန်ဆန်စွာ အသုံးပြုနိုင်ပါသည်
+
+👇 TikTok link ကို ဒီ chat ထဲပို့လိုက်ပါ
+
+Keep it short, clean, mobile-friendly.
+
+==================================================
+PART 2 — MAIN MENU BUTTONS
+==================================================
+
+Add/improve buttons (safe with existing flow):
+
+- 📘 အသုံးပြုနည်း
+- 👤 ကျွန်ုပ်၏ Status
+- 🎁 Invite / Referral
+- ⬅️ Back
+
+Rules:
+- Do NOT break direct link sending flow
+- Do NOT force navigation
+- Keep UX simple
+
+==================================================
+PART 3 — GUIDE PAGE
+==================================================
+
+Create help page:
+
+1. TikTok link ကို copy လုပ်ပါ
+2. Bot ကို paste လုပ်ပါ
+3. Video/Audio ကို ရယူနိုင်ပါသည်
+
+Include:
+- one link at a time note
+- simple explanation
+
+Must include Back button
+
+==================================================
+PART 4 — STATUS PAGE
+==================================================
+
+Show:
+
+- User ID
+- Downloads count (if exists)
+- Referral count (if exists)
+- Plan: Free
+- Cooldown info
+
+Keep clean, no sensitive data.
+
+==================================================
+PART 5 — REFERRAL PAGE (PLACEHOLDER)
+==================================================
+
+Prepare UI only:
+
+Show referral link if safe:
+t.me/{bot}?start=ref_{user_id}
+
+Explain rewards (NOT ACTIVE YET):
+
+- 3 invites → ad skip
+- 10 invites → premium
+- 50 invites → premium extended
+
+IMPORTANT:
+- Do NOT activate rewards
+- This is placeholder only
+
+==================================================
+PART 6 — COOLDOWN UI
+==================================================
+
+If cooldown triggered:
+
+⏳ ကျေးဇူးပြု၍ {seconds} seconds စောင့်ပြီး ထပ်မံကြိုးစားပါ
+
+Keep simple and clean.
+
+==================================================
+PART 7 — DOWNLOAD FLOW POLISH
+==================================================
+
+Improve messages only:
+
+- Processing...
+- Download ready
+- Invalid link
+- Video unavailable
+
+Do NOT change logic.
+
+==================================================
+PART 8 — NAVIGATION RULES
+==================================================
+
+- Every page must have Back button
+- No dead-end UI
+- Existing commands must still work
+
+==================================================
+PART 9 — FUTURE FEATURE PLACEHOLDER
+==================================================
+
+Show as locked/coming soon only:
+
+- Premium
+- Ads unlock
+- Sponsor system
+- Business features
+
+Do NOT activate.
+
+==================================================
+PART 10 — CODE RULES
+==================================================
+
+- Keep existing structure
+- Update only necessary files
+- No duplicate handlers
+- Clean aiogram usage
+
+==================================================
+LOGGING
+==================================================
+
+Log:
+- start
+- guide open
+- status open
+- referral open
+- cooldown triggered
+
+==================================================
+OUTPUT
+==================================================
+
+- Show changed files only
+- Provide full updated code for those files
+- Explain changes
+- Ensure backward compatibility
+- Explain how to test in Replit

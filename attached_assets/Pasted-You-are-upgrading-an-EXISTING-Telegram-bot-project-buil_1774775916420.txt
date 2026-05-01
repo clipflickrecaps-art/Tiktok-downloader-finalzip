@@ -1,0 +1,211 @@
+You are upgrading an EXISTING Telegram bot project built with aiogram on Replit.
+
+CRITICAL RULES:
+- This is NOT a new project
+- DO NOT rebuild from scratch
+- DO NOT remove or break any existing features
+- KEEP downloader, cooldown, quota system, referral system, admin panel, roles, logging, feature flags, threshold locks intact
+- ONLY extend the system safely
+
+==================================================
+GOAL — BROADCAST AUTOMATION (PHASE 1)
+==================================================
+
+Implement a FULL ADMIN-ONLY BROADCAST SYSTEM with:
+
+1. Scheduled (one-time) broadcast
+2. Repeat broadcast (interval-based)
+3. Broadcast job management (list, pause, resume, cancel)
+4. Support for text, photo, video broadcasts
+
+NO auto-delete in this phase.
+
+==================================================
+PART 1 — DATABASE
+==================================================
+
+Create or extend a table:
+
+broadcasts:
+- id (INTEGER PRIMARY KEY)
+- type (text/photo/video)
+- content (TEXT)
+- media_file_id (TEXT, nullable)
+- schedule_time (DATETIME)
+- repeat_interval_seconds (INTEGER, nullable)
+- is_active (BOOLEAN)
+- is_paused (BOOLEAN)
+- created_by (INTEGER)
+- created_at (DATETIME)
+- last_run_at (DATETIME, nullable)
+- next_run_at (DATETIME)
+
+==================================================
+PART 2 — SCHEDULER ENGINE
+==================================================
+
+Use APScheduler (or existing scheduler system if present).
+
+Requirements:
+- run background job loop
+- check broadcasts where:
+    is_active = True
+    is_paused = False
+    next_run_at <= now
+
+When triggered:
+1. send broadcast to all users
+2. update last_run_at
+3. if repeat:
+       next_run_at += repeat_interval
+   else:
+       mark is_active = False
+
+IMPORTANT:
+- must NOT duplicate runs
+- must be safe for restarts
+- must use DB-driven schedule (not memory only)
+
+==================================================
+PART 3 — BROADCAST SENDING LOGIC
+==================================================
+
+Send to ALL users in database.
+
+Support:
+- text → send_message
+- photo → send_photo
+- video → send_video
+
+Requirements:
+- skip users who blocked bot
+- catch exceptions (do not crash loop)
+- log success/failure
+- add small delay if needed (avoid flood)
+
+==================================================
+PART 4 — ADMIN COMMANDS
+==================================================
+
+Admin-only commands:
+
+1. /broadcast
+→ start creation flow
+
+Flow:
+- choose type (text/photo/video)
+- input content
+- choose:
+    [Send Now]
+    [Schedule Time]
+    [Repeat]
+
+If schedule:
+- input datetime
+
+If repeat:
+- input interval (seconds/minutes/hours)
+
+Save broadcast into DB.
+
+---
+
+2. /listbroadcast
+→ show all jobs
+
+Format:
+ID | Type | Next Run | Repeat | Status
+
+---
+
+3. /pausebroadcast <id>
+→ set is_paused = True
+
+---
+
+4. /resumebroadcast <id>
+→ set is_paused = False
+
+---
+
+5. /cancelbroadcast <id>
+→ set is_active = False
+
+---
+
+6. /broadcaststats
+→ show:
+- total broadcasts
+- active jobs
+- paused jobs
+- completed jobs
+
+==================================================
+PART 5 — ADMIN PANEL INTEGRATION
+==================================================
+
+Integrate into existing admin panel menu:
+
+Add buttons:
+- 📢 Create Broadcast
+- 🕒 Scheduled Jobs
+- ⏸ Pause / Resume
+- ❌ Cancel Broadcast
+- 📊 Broadcast Stats
+
+Do NOT break existing admin panel.
+
+==================================================
+PART 6 — PERMISSION CONTROL
+==================================================
+
+- Only OWNER / ADMIN can use broadcast
+- Respect roles system
+- Non-admin must not access commands
+
+==================================================
+PART 7 — LOGGING
+==================================================
+
+Log:
+- broadcast created
+- broadcast sent
+- broadcast failed per user
+- pause/resume/cancel actions
+- scheduler trigger events
+
+==================================================
+PART 8 — SAFETY RULES
+==================================================
+
+- DO NOT break downloader
+- DO NOT break cooldown/quota
+- DO NOT break referral
+- DO NOT break task system
+- DO NOT affect existing DB
+- keep backward compatibility
+
+==================================================
+PART 9 — OUTPUT
+==================================================
+
+- show only changed files
+- provide full updated code
+- explain:
+    1. how scheduler works
+    2. how repeat works
+    3. how broadcast is sent
+    4. how admin controls jobs
+
+==================================================
+TEST CASES
+==================================================
+
+1. create text broadcast → send now
+2. create scheduled broadcast → send at time
+3. create repeat broadcast → sends repeatedly
+4. pause job → stops sending
+5. resume job → continues
+6. cancel job → stops permanently
+7. users who blocked bot are skipped safely
+8. bot does not crash

@@ -1,0 +1,94 @@
+You are upgrading an EXISTING Telegram bot project built with aiogram on Replit.
+
+CRITICAL RULES:
+- This is NOT a new project
+- DO NOT rebuild from scratch
+- DO NOT remove any existing working functions
+- DO NOT break the current downloader behavior
+- DO NOT break current admin panel behavior
+- DO NOT change the whole architecture unnecessarily
+- KEEP everything currently working
+- Only make a minimal safe UI adjustment
+
+CURRENT TASK:
+Keep the main user menu as ALWAYS-VISIBLE Telegram chat buttons using ReplyKeyboardMarkup (not inline buttons), and add a Main Menu button.
+
+IMPORTANT:
+- The user wants buttons that stay visible in the Telegram chat input area
+- Do NOT convert them to inline buttons
+- Do NOT redesign the whole bot
+- Do NOT change the downloader flow
+- Users must still be able to type and send TikTok links directly as before
+
+BUTTONS TO KEEP VISIBLE:
+- 📘 အသုံးပြုနည်း
+- 👤 ကျွန်ုပ်၏ Status
+- 🎁 Invite / Referral
+- 🏠 Main Menu
+
+REQUIRED CHANGES:
+
+1. Use ReplyKeyboardMarkup for the main user menu
+- These buttons must remain visible in the chat area
+- Resize keyboard properly for mobile
+- Keep it clean and simple
+- Use persistent keyboard behavior if supported safely
+
+2. Layout:
+- First row: 📘 အသုံးပြုနည်း | 👤 ကျွန်ုပ်၏ Status
+- Second row: 🎁 Invite / Referral | 🏠 Main Menu
+
+3. /start behavior
+- When user sends /start, send the current welcome/start message
+- Attach the always-visible reply keyboard
+- Keep the existing /start message style mostly unchanged
+- Do not remove current start message content unless small cleanup is needed
+
+4. Main Menu button behavior
+- When user taps 🏠 Main Menu, show the main welcome/start-style message again
+- Reattach the same reply keyboard
+- This should act like a safe return-to-home action
+- Do not reset or break any current state unnecessarily
+
+5. Button handling
+- If guide/status/referral handlers already exist, reuse them
+- Do not duplicate large logic blocks
+- Keep existing behavior for these sections
+- Add a clean handler for 🏠 Main Menu
+
+6. Keep downloader flow unchanged
+- Users must still be able to paste TikTok links directly into chat
+- The visible menu buttons must not interfere with direct link sending
+- Non-button user messages should still go through the current TikTok link processing flow
+
+7. Do not change the rest of the bot unnecessarily
+- No major UI redesign
+- No inline conversion
+- No admin flow changes
+- No downloader logic changes unless absolutely needed for compatibility
+
+8. Logging
+- Log when:
+  - /start is used
+  - guide button is pressed
+  - status button is pressed
+  - referral button is pressed
+  - main menu button is pressed
+
+9. Future threshold rules must remain unchanged
+- Force Join stays locked until 500 users
+- Premium/VIP stays locked until 1000 users
+- Business layer stays locked until 1000 users
+- Pro features stay locked until 1000 users
+- Option B stays locked until 1000 users
+- Option C stays locked until 5000 users
+- Do NOT activate any of these now
+
+10. Output requirements
+- Show only changed files
+- Provide full updated code for changed files only
+- Keep everything copy-paste ready
+- Explain how to test the always-visible reply keyboard in Replit
+
+GOAL:
+Keep the main menu as always-visible Telegram chat buttons using ReplyKeyboardMarkup, add a Main Menu button, and preserve all current bot behavior.

@@ -1,0 +1,66 @@
+Fix my EXISTING Telegram bot's Facebook downloader again.
+
+CRITICAL:
+- Do NOT rebuild the project
+- Do NOT break TikTok download, image, audio, cooldown, quota, admin panel, referral, or scheduler
+- This is a regression/fix only for Facebook share links still failing
+
+PROBLEM:
+Facebook public share links like:
+- https://www.facebook.com/share/v/...
+are still being classified as private/unsupported.
+The bot is returning the private/friends-only error too early.
+
+GOAL:
+Make public Facebook share links work correctly.
+
+REQUIRED FIX:
+
+1. Do NOT classify Facebook share/v or share/r links as private before extraction is attempted.
+
+2. For Facebook links, use yt-dlp as the PRIMARY extractor directly on the original link first:
+- facebook.com/share/v/...
+- facebook.com/share/r/...
+- facebook.com/watch/...
+- facebook.com/.../videos/...
+- fb.watch/...
+
+3. Do NOT rely only on manual redirect resolution.
+If manual resolution exists, keep it only as fallback.
+The main logic should be:
+- pass original Facebook URL directly to yt-dlp
+- let yt-dlp resolve redirects and extract metadata
+
+4. Only return the "private / friends-only / protected" message AFTER yt-dlp extraction fails and the error actually indicates inaccessible content.
+
+5. Improve Facebook router logic:
+- detect Facebook link
+- call Facebook extraction
+- if extraction succeeds -> download/send video
+- if extraction fails due to inaccessible/private/protected -> show private/unavailable message
+- if extraction fails due to unsupported format -> show clean unsupported message
+
+6. Add detailed logging for Facebook flow:
+- facebook link received
+- extraction started
+- yt-dlp raw error message
+- extraction success/failure
+- reason for private/unavailable classification
+
+7. If needed, update yt-dlp invocation to use:
+- extract_info(url, download=False) first
+- then download best video safely
+- follow redirects
+- no premature blocking
+
+8. Keep Facebook downloads PUBLIC-ONLY.
+Do not try to bypass private or protected content.
+
+9. Keep current cooldown/quota behavior unchanged.
+Facebook downloads should still use the same current usage logic.
+
+OUTPUT:
+- show only changed files
+- provide full updated code for changed files only
+- explain exactly why share links were failing before
+- explain how the new extraction flow works

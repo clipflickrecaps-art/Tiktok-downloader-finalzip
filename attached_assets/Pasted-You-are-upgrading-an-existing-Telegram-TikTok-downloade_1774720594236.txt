@@ -1,0 +1,213 @@
+You are upgrading an existing Telegram TikTok downloader bot project on Replit.
+
+CRITICAL RULES:
+- This is NOT a new project
+- DO NOT rebuild from scratch
+- DO NOT remove any existing working functions
+- DO NOT break the current bot behavior
+- DO NOT redesign the entire architecture
+- DO NOT change the bot style unnecessarily
+- KEEP the current user flow and admin flow as much as possible
+- Only add safe, minimal, backward-compatible improvements
+- Existing downloader, admin, logging, SQLite, temp file sending, and anti-spam features must continue to work
+
+CURRENT TASK:
+Perform a combined safe upgrade for:
+- Step 6: Admin Panel UX Upgrade
+- Step 7: Better User UX
+- Step 11: Download History
+- Step 12: Analytics / Reporting
+- Step 14: Backup / Export tools
+
+PROJECT CONTEXT:
+This is an already running Telegram TikTok downloader bot.
+Previous upgrades already improved:
+- logging and error handling
+- SQLite migration
+- downloader stability
+- temp file based sending
+- anti-spam cooldown / safer request control
+
+MAIN GOAL:
+Improve admin usability, improve user-facing experience, add download history and analytics, and add backup/export tools — without removing any current features and without rewriting the whole project.
+
+==================================================
+STEP 6 — ADMIN PANEL UX UPGRADE
+==================================================
+
+REQUIRED:
+1. Improve the admin panel/menu safely
+- Keep current admin commands/features
+- Make the admin menu cleaner and easier to use
+- If inline keyboard is already used, improve labels and grouping
+- If text menu is used, keep compatibility but improve clarity
+
+2. Improve admin stats output
+- Show stats in a cleaner readable format
+- Include:
+  - total users
+  - total banned users
+  - total downloads
+  - successful downloads
+  - failed downloads
+  - today’s downloads if possible
+
+3. Improve admin moderation flow
+- Keep existing ban features
+- Add unban if not already available
+- Make messages clearer and safer
+
+4. Improve broadcast UX
+- Keep the current broadcast feature
+- Add a confirmation step before sending broadcast if practical
+- Keep this minimal and safe
+- Log broadcast start and completion
+
+5. Improve export options for admin
+- Export users list
+- Export banned users list
+- Export download history
+- Export should be easy for admin to trigger
+
+==================================================
+STEP 7 — BETTER USER UX
+==================================================
+
+REQUIRED:
+1. Improve /start message safely
+- Keep the existing style and function
+- Make it cleaner and clearer
+- Briefly explain what the bot does
+- Tell users to send a TikTok link
+- Add help/about buttons if appropriate and minimal
+
+2. Add/help improve a help section
+- Explain supported TikTok link types
+- Explain video/audio behavior if relevant
+- Explain simple usage
+
+3. Improve invalid input replies
+- For non-TikTok links, reply with a clean helpful message
+- Example:
+  “Please send a valid TikTok link.”
+
+4. Add or improve processing feedback
+- When a valid link is received, send a short processing message if this fits current flow
+- Example:
+  “Processing your request...”
+
+5. Improve success/failure messages
+- Keep them short and clean
+- Do not expose raw errors
+
+==================================================
+STEP 11 — DOWNLOAD HISTORY
+==================================================
+
+REQUIRED:
+1. Add a downloads table to SQLite if not already present
+Suggested columns:
+- id INTEGER PRIMARY KEY AUTOINCREMENT
+- user_id INTEGER
+- url TEXT
+- media_type TEXT
+- status TEXT
+- error_reason TEXT
+- created_at TEXT
+
+2. Save download history for each request
+- Store whether the request was:
+  - video
+  - audio
+  - other supported media type
+- Store result status:
+  - success
+  - failed
+- Store failure reason if available
+
+3. Keep it safe and minimal
+- Do not break current download flow
+- If saving history fails, do not crash the bot
+
+==================================================
+STEP 12 — ANALYTICS / REPORTING
+==================================================
+
+REQUIRED:
+1. Use SQLite data to produce simple analytics
+- total users
+- total banned users
+- total downloads
+- successful downloads
+- failed downloads
+- downloads today
+- active users today if practical
+
+2. Add admin-facing analytics output
+- Make it readable
+- Keep it simple and useful
+- Use current admin flow if possible
+
+3. Logging
+- Log analytics generation
+- Log database errors safely
+
+==================================================
+STEP 14 — BACKUP / EXPORT TOOLS
+==================================================
+
+REQUIRED:
+1. Add database backup support
+- Allow admin to trigger a database backup file export
+- Backup can be a copied .db file with timestamped name if practical
+
+2. Add export tools
+- Export users data
+- Export banned users data
+- Export download history
+- CSV or TXT is acceptable
+- Prefer CSV where practical
+
+3. Safety
+- Export/backup must not corrupt the live database
+- If export fails, notify admin cleanly
+- Log backup/export success and failure
+
+==================================================
+GENERAL REQUIREMENTS
+==================================================
+
+1. Keep all current working functions
+- Do not remove downloader features
+- Do not remove admin features
+- Do not change major flow unnecessarily
+
+2. Use minimal structural changes
+- Prefer improving existing files
+- If helper functions/files are needed, keep them small and clean
+
+3. Logging
+- Log admin actions
+- Log user-facing key events
+- Log DB/history/analytics/export events
+- Log errors safely
+
+4. SQLite integration
+- Reuse the existing database layer from previous upgrades
+- Add only the necessary new tables/functions
+
+5. Backward compatibility
+- Existing bot commands must still work
+- Existing admin flow must still work
+- Existing user flow must still work
+
+AT THE END:
+- Show exactly which files were changed
+- Provide full updated code for changed files only
+- Explain how to test each upgraded area manually in Replit
+- Keep everything copy-paste ready
+
+OUTPUT FORMAT:
+- Full updated code for changed files only
+- Minimal safe edits
+- Backward-compatible implementation

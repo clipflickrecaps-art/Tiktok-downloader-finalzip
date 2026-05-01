@@ -1,0 +1,229 @@
+You are upgrading an EXISTING Telegram bot project built with aiogram on Replit.
+
+CRITICAL RULES:
+- This is NOT a new project
+- DO NOT rebuild from scratch
+- DO NOT remove any existing working features
+- DO NOT break downloader logic if already exists
+- DO NOT break admin panel, logging, database, or role system
+- KEEP all current architecture intact
+- Only EXTEND and IMPROVE safely
+
+==================================================
+BATCH 2 GOAL
+==================================================
+
+Upgrade the CORE DOWNLOAD SYSTEM with:
+
+- TikTok link validation
+- stable video download flow
+- audio (MP3) extraction support
+- TikTok image/photo carousel support (FREE NOW)
+- cooldown system (ACTIVE NOW)
+- clean error handling
+- future monetization hooks (ads + premium)
+
+==================================================
+PART 1 — LINK VALIDATION
+==================================================
+
+Detect valid TikTok links:
+
+- tiktok.com
+- vm.tiktok.com
+- vt.tiktok.com
+
+If invalid:
+❌ TikTok link မှန်ကန်စွာ ပို့ပါ
+
+Do NOT process invalid inputs.
+
+==================================================
+PART 2 — CONTENT TYPE DETECTION
+==================================================
+
+When valid link is received:
+
+Detect whether the post is:
+1. Video
+2. Photo / Image carousel
+
+Use downloader metadata or response if available.
+
+Log content type:
+- video
+- image
+
+==================================================
+PART 3 — VIDEO DOWNLOAD FLOW
+==================================================
+
+- Use existing downloader logic (DO NOT rewrite if already exists)
+- Send video file to user
+- Prefer no-watermark version if supported
+- Clean temp files after sending
+
+==================================================
+PART 4 — AUDIO EXTRACTION
+==================================================
+
+- Convert video → MP3
+- Send audio file
+- If fails:
+❌ Audio extract မအောင်မြင်ပါ
+
+==================================================
+PART 5 — IMAGE / PHOTO DOWNLOAD (FREE NOW)
+==================================================
+
+If TikTok post is IMAGE / PHOTO type:
+
+CURRENT BEHAVIOR (IMPORTANT):
+
+- This feature is AVAILABLE FOR FREE now
+- DO NOT lock it
+- DO NOT require ads
+- DO NOT require premium
+
+IMPLEMENT:
+
+- Extract all images from post
+- If multiple images:
+  → send as media group (album)
+- If single image:
+  → send as photo
+
+Make sure:
+- image quality is preserved
+- no unnecessary compression if possible
+
+==================================================
+PART 6 — FUTURE MONETIZATION PREPARATION (DO NOT ACTIVATE)
+==================================================
+
+Prepare code structure for future:
+
+After 1000 users, image download may be:
+
+- ad-required (Option B)
+- premium-only
+- hybrid (ad OR premium)
+
+Prepare function like:
+
+check_image_access(user)
+
+Current behavior:
+→ always allow (return True)
+
+Future:
+→ check premium or ad status
+
+IMPORTANT:
+- DO NOT activate monetization now
+- DO NOT block users now
+- Only prepare structure
+
+==================================================
+PART 7 — COOLDOWN SYSTEM (ENABLE NOW)
+==================================================
+
+Implement per-user cooldown:
+
+- 30 seconds per request
+
+Logic:
+- Store last request timestamp per user
+- If within cooldown:
+
+Reply:
+⏳ {remaining_seconds} seconds စောင့်ပါ
+
+Block processing
+
+==================================================
+PART 8 — ERROR HANDLING
+==================================================
+
+Handle:
+
+- invalid link
+- private content
+- removed content
+- download failure
+
+Messages:
+
+❌ Video မရနိုင်ပါ (private or deleted)
+❌ Download မအောင်မြင်ပါ နောက်မှ ထပ်ကြိုးစားပါ
+
+==================================================
+PART 9 — FILE MANAGEMENT
+==================================================
+
+- Use temp directory
+- Delete files after sending
+- Prevent storage leaks
+
+==================================================
+PART 10 — UI COMPATIBILITY
+==================================================
+
+- Keep ReplyKeyboard (Batch 1)
+- Keep Main Menu button
+- Keep Guide / Status / Referral pages working
+- Do NOT break UI flow
+
+==================================================
+PART 11 — FUTURE SYSTEM RULES (CRITICAL)
+==================================================
+
+DO NOT ACTIVATE:
+
+- Force Join → 500 users
+- Premium → 1000 users
+- Ads system (Option B) → 1000 users
+- Business layer → 1000 users
+- Pro features → 1000 users
+- Sponsor system (Option C) → 5000 users
+
+Image download:
+→ MUST remain FREE for now
+
+==================================================
+PART 12 — LOGGING
+==================================================
+
+Log:
+
+- link received
+- content type (video/image)
+- download success
+- download fail
+- cooldown triggered
+- invalid link
+
+==================================================
+OUTPUT REQUIREMENTS
+==================================================
+
+- Show only changed files
+- Provide full working code (no pseudo)
+- Keep modular structure
+
+Explain:
+
+1. How content type detection works
+2. How image download works (media group vs single)
+3. How cooldown system works
+4. How future monetization hook is prepared
+
+==================================================
+TEST CASES
+==================================================
+
+1. Video link → video download works
+2. Image link → images download (album or single)
+3. Invalid link → error message
+4. Spam → cooldown blocks
+5. Audio extract → works

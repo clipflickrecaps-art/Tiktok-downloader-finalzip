@@ -1,0 +1,88 @@
+You are upgrading an existing Telegram bot project on Replit.
+
+CRITICAL RULES:
+- This is NOT a new project
+- DO NOT rebuild from scratch
+- DO NOT remove any existing working functions
+- DO NOT change the overall bot style unnecessarily
+- DO NOT replace the whole structure with a different architecture
+- KEEP all current bot features working
+- KEEP the current user flow and admin flow unless a very small improvement is needed
+- ONLY improve the current project carefully
+- Any modification must be minimal, safe, and backward-compatible
+
+PROJECT TYPE:
+A Telegram TikTok downloader bot written in Python and already running.
+
+CURRENT PRIORITY:
+Step 1 only — improve logging and error handling without changing the bot’s existing functionality.
+
+MAIN GOAL:
+Keep the bot exactly as it currently works, but make it easier to debug, monitor, and maintain.
+
+ALLOWED CHANGES:
+- Add logging setup
+- Add logs folder and bot.log file
+- Add helper functions for safe logging
+- Improve try/except blocks
+- Add better error messages
+- Add optional admin error notifications
+- Small internal refactors only if necessary for stability
+
+NOT ALLOWED:
+- Do not remove commands
+- Do not remove admin panel features
+- Do not change the bot’s core behavior
+- Do not redesign the whole codebase
+- Do not rewrite all files if only small edits are needed
+- Do not change the UI/UX style significantly
+
+REQUIRED CHANGES:
+
+1. Add a proper Python logging system
+- Log to both console and file
+- File path: logs/bot.log
+- Auto-create logs directory if missing
+- Include timestamp, log level, and message
+
+2. Improve exception handling
+- Replace silent `except:` or `except Exception: pass`
+- Log all important failures properly
+- Keep the bot running even if an action fails
+
+3. Log important events
+- bot startup
+- /start usage
+- TikTok link received
+- video/audio download started
+- download success
+- admin command usage
+- broadcast usage
+- ban/unban actions if available
+
+4. Improve failure visibility
+- invalid TikTok URL
+- API timeout
+- invalid API response
+- file download failure
+- Telegram send failure
+- unexpected exception
+
+5. Improve user-facing error messages
+- Show clean and simple messages to users
+- Never show raw traceback to users
+
+6. Add optional admin critical error alert helper
+- If ADMIN_ID exists, allow short error alerts to admin
+- This helper itself must be safe and never crash the bot
+
+7. Keep changes minimal and safe
+- Prefer editing existing files over creating unnecessary new complexity
+- Only create a new helper/logger file if it truly improves cleanliness
+
+AT THE END:
+- Show exactly which files were changed
+- Explain what was added
+- Explain how to test it manually in Replit
+- Return full updated code for changed files
+- Keep everything copy-paste ready

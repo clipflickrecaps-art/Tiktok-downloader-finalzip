@@ -1,0 +1,81 @@
+You are upgrading an existing Telegram bot project on Replit.
+
+CRITICAL RULES:
+- This is NOT a new project
+- DO NOT rebuild from scratch
+- DO NOT remove any existing working functions
+- DO NOT change the bot’s overall flow unnecessarily
+- DO NOT break current commands or admin features
+- KEEP all current bot behavior as much as possible
+- This is a safe internal upgrade only
+
+CURRENT STEP:
+Step 2 only — migrate the project from TXT-based storage to SQLite safely.
+
+PROJECT CONTEXT:
+The Telegram TikTok downloader bot is already running.
+It currently uses simple text files like users.txt and banned.txt for storage.
+
+MAIN GOAL:
+Upgrade storage from TXT files to SQLite while preserving all current bot functionality.
+
+REQUIRED CHANGES:
+
+1. Add SQLite database support
+- Use Python sqlite3
+- Create a database file such as bot_data.db
+
+2. Create tables if they do not exist
+- users
+  - user_id INTEGER PRIMARY KEY
+  - username TEXT
+  - first_name TEXT
+  - joined_at TEXT
+- banned_users
+  - user_id INTEGER PRIMARY KEY
+  - banned_at TEXT
+
+3. Keep the old TXT files
+- Do NOT delete users.txt or banned.txt
+- Treat them as legacy backup sources
+
+4. Add migration/import logic
+- On startup, if users.txt exists, import user IDs into SQLite if not already present
+- On startup, if banned.txt exists, import banned user IDs into SQLite if not already present
+- Migration must be idempotent (safe to run multiple times without duplicates)
+
+5. Update the database helper logic
+- Replace current TXT read/write usage with SQLite-backed helper functions
+- Keep function names as compatible as possible with the existing code
+- If there is a database.py file, upgrade it instead of redesigning the project
+
+6. Supported operations must continue working
+- register/save user
+- check if user exists
+- ban user
+- unban user if this exists
+- check if user is banned
+- count users
+- list/export users if needed by current admin features
+
+7. Logging
+- Log database initialization
+- Log migration/import counts
+- Log user register/ban actions
+- Log DB errors safely
+
+8. Safety
+- If SQLite fails for some reason, do not corrupt old TXT files
+- Do not remove existing admin commands
+- Do not change the user-visible bot style
+
+9. At the end:
+- show which files were changed
+- show the full updated code for changed files
+- explain how the migration works
+- explain how I should test it manually in Replit
+
+OUTPUT FORMAT:
+- Full copy-paste-ready code only
+- Prefer minimal edits to existing files
+- Keep the upgrade clean, backward-compatible, and production-friendly

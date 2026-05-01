@@ -1,0 +1,131 @@
+You are upgrading an EXISTING Telegram bot project built with aiogram.
+
+CRITICAL RULES:
+- Do NOT rebuild from scratch
+- Do NOT break existing downloader, cooldown, quota, admin panel, referral, logging
+- Only extend the system
+
+==================================================
+BATCH 7 GOAL
+==================================================
+
+Implement SPONSOR / TASK SYSTEM (locked until 5000 users)
+
+Users will complete tasks to unlock rewards.
+
+This must be safe, modular, and admin-controlled.
+
+==================================================
+PART 1 — TASK SYSTEM STRUCTURE
+==================================================
+
+Create task system with types:
+
+- join_channel
+- visit_link
+- custom_task
+
+Task fields:
+- id
+- title
+- description
+- task_type
+- target (channel/link)
+- reward_amount (downloads)
+- is_active
+
+==================================================
+PART 2 — USER FLOW
+==================================================
+
+When user reaches limit:
+
+Show:
+
+"⚠️ Limit reached
+Complete a task to unlock more downloads"
+
+Button:
+- "🎯 Complete Task"
+
+Open task list
+
+==================================================
+PART 3 — TASK UI
+==================================================
+
+User sees list:
+
+Example:
+
+1. Join our channel → +5 downloads  
+2. Visit partner link → +3 downloads  
+
+Buttons:
+- "Go to Task"
+- "✅ I Completed"
+
+==================================================
+PART 4 — TASK COMPLETION LOGIC
+==================================================
+
+For join_channel:
+
+- check user is member
+- if yes → give reward
+
+For link:
+
+- simulate completion (placeholder)
+
+Add:
+- user_task table
+- prevent duplicate rewards
+
+==================================================
+PART 5 — REWARD SYSTEM
+==================================================
+
+On success:
+- add_extra_quota(user_id, reward_amount)
+
+Send:
+
+"🎉 Task completed!
++5 downloads added"
+
+==================================================
+PART 6 — ADMIN PANEL
+==================================================
+
+Admin can:
+- create task
+- edit task
+- enable/disable task
+- view stats
+
+==================================================
+PART 7 — THRESHOLD LOCK
+==================================================
+
+Tasks must be locked until 5000 users
+
+If not reached:
+- show "Coming soon"
+
+==================================================
+PART 8 — LOGGING
+==================================================
+
+Log:
+- task viewed
+- task completed
+- reward given
+
+==================================================
+OUTPUT
+==================================================
+
+- show only changed files
+- explain task flow
+- explain reward logic

@@ -1,0 +1,148 @@
+You are upgrading an EXISTING Telegram bot project built with aiogram on Replit.
+
+CRITICAL RULES:
+- This is NOT a new project
+- DO NOT rebuild from scratch
+- DO NOT remove any existing features
+- DO NOT break TikTok downloader
+- DO NOT break cooldown, quota, referral, admin panel, scheduler, broadcast
+- ONLY upgrade Facebook downloader quality handling
+
+==================================================
+GOAL
+==================================================
+
+Implement ORIGINAL QUALITY PRESERVATION for Facebook downloads.
+
+Users must receive the BEST AVAILABLE source quality without unnecessary compression or re-encoding.
+
+==================================================
+PART 1 — QUALITY STRATEGY
+==================================================
+
+For Facebook downloads:
+
+1. Always try to extract BEST available format
+2. Prefer highest resolution video (HD / Full HD if available)
+3. Avoid re-encoding or reprocessing
+4. Download DIRECT source stream only
+
+IMPORTANT:
+- Do NOT reduce quality
+- Do NOT convert format unless absolutely required
+- Do NOT recompress video
+
+==================================================
+PART 2 — YT-DLP CONFIG (IMPORTANT)
+==================================================
+
+When using yt-dlp:
+
+- Use best format selector:
+
+format = "bestvideo+bestaudio/best"
+
+- Merge formats if needed WITHOUT re-encoding
+- Use FFmpeg only for merging, not compression
+
+==================================================
+PART 3 — TELEGRAM SENDING MODE
+==================================================
+
+Implement TWO sending modes:
+
+----------------------------------------
+FREE USERS:
+----------------------------------------
+- send using send_video
+- allow preview player
+- best effort quality
+
+----------------------------------------
+VIP / PREMIUM USERS:
+----------------------------------------
+- send using send_document
+- preserve original file characteristics
+- no Telegram compression
+- keep original filename if possible
+
+==================================================
+PART 4 — MODE SWITCH LOGIC
+==================================================
+
+Add logic:
+
+IF user is VIP:
+    → send_document(file)
+
+ELSE:
+    → send_video(file)
+
+IMPORTANT:
+- Do NOT duplicate download process
+- Only change sending method
+
+==================================================
+PART 5 — FILE HANDLING
+==================================================
+
+- Store file in temp directory
+- Use original filename if possible
+- Clean up after sending
+
+==================================================
+PART 6 — QUALITY FALLBACK
+==================================================
+
+If best format not available:
+
+1. fallback to next best available
+2. NEVER force low quality unnecessarily
+3. log selected format
+
+==================================================
+PART 7 — LOGGING
+==================================================
+
+Log:
+- selected format (resolution/bitrate)
+- file size
+- whether VIP mode or FREE mode used
+- sending method (video/document)
+
+==================================================
+PART 8 — USER MESSAGES
+==================================================
+
+Keep messages simple:
+
+Free:
+"⏳ Processing..."
+"✅ Download ready"
+
+VIP:
+"💎 Original Quality Download..."
+"🚀 Best quality ready"
+
+Optional upgrade message:
+"💎 Original quality + no compression = VIP only"
+
+==================================================
+PART 9 — SAFETY
+==================================================
+
+- DO NOT break TikTok logic
+- DO NOT break existing downloader flow
+- DO NOT change routing
+- ONLY enhance Facebook download output
+
+==================================================
+PART 10 — OUTPUT
+==================================================
+
+- Show only changed files
+- Provide full updated code for changed parts
+- Explain:
+  1. how best format is selected
+  2. how Telegram send mode differs
+  3. how quality is preserved

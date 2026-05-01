@@ -1,0 +1,240 @@
+You are upgrading an EXISTING Telegram bot project built with aiogram on Replit.
+
+CRITICAL RULES:
+- This is NOT a new project
+- DO NOT rebuild from scratch
+- DO NOT remove or break any existing features
+- KEEP downloader, cooldown, quota system, referral system, admin panel, roles, logging, feature flags, threshold locks, and Broadcast Phase 1 intact
+- ONLY extend the system safely
+
+==================================================
+GOAL — BROADCAST AUTOMATION (PHASE 2)
+==================================================
+
+Implement AUTO DELETE for broadcast messages.
+
+This phase must add:
+
+1. Per-broadcast auto delete setting
+2. Delivery tracking
+3. Scheduled deletion of bot-sent broadcast messages
+4. Admin visibility for delete status
+5. Safe logging and failure handling
+
+IMPORTANT:
+- Only delete messages sent by the bot through the broadcast system
+- Do NOT delete unrelated user messages
+- Do NOT break scheduled/repeat broadcast jobs
+- Do NOT break existing admin controls
+
+==================================================
+PART 1 — DATABASE
+==================================================
+
+Create or extend tables:
+
+broadcasts:
+Add fields if not present:
+- auto_delete_enabled (BOOLEAN, default False)
+- auto_delete_after_seconds (INTEGER, nullable)
+
+broadcast_deliveries:
+- id (INTEGER PRIMARY KEY)
+- broadcast_id (INTEGER)
+- user_id (INTEGER)
+- message_id (INTEGER)
+- sent_at (DATETIME)
+- delete_at (DATETIME, nullable)
+- deleted_at (DATETIME, nullable)
+- delete_status (TEXT, nullable)   -- pending / deleted / failed / skipped
+- delete_error (TEXT, nullable)
+
+Requirements:
+- Track every successfully sent broadcast message
+- Only create delivery records when sending succeeds
+
+==================================================
+PART 2 — DELIVERY TRACKING
+==================================================
+
+When a broadcast is sent successfully to a user:
+
+- store user_id
+- store broadcast_id
+- store Telegram message_id
+- store sent_at
+- if auto_delete_enabled:
+    calculate delete_at = sent_at + auto_delete_after_seconds
+    set delete_status = pending
+  else:
+    delete_status can be null or skipped
+
+IMPORTANT:
+- Works for text, photo, video broadcasts
+- Must not duplicate delivery records for the same send event
+
+==================================================
+PART 3 — AUTO DELETE ENGINE
+==================================================
+
+Use APScheduler (or the existing scheduler from Broadcast Phase 1).
+
+Add a background deletion job that regularly checks broadcast_deliveries for:
+- delete_status = pending
+- delete_at <= now
+- deleted_at is null
+
+For each eligible record:
+1. call bot.delete_message(chat_id=user_id, message_id=message_id)
+2. if success:
+   - set deleted_at = now
+   - set delete_status = deleted
+3. if failure:
+   - set delete_status = failed
+   - store delete_error safely
+
+IMPORTANT:
+- Must never crash the bot
+- Must handle deleted/missing/forbidden messages safely
+- Must continue processing other pending deletions
+
+==================================================
+PART 4 — BROADCAST CREATION FLOW UPDATE
+==================================================
+
+Extend the existing admin broadcast creation flow.
+
+After choosing send mode (send now / schedule / repeat), ask:
+
+Auto delete?
+- Yes
+- No
+
+If Yes:
+Ask admin for delete delay:
+Examples accepted:
+- 10 minutes
+- 1 hour
+- 24 hours
+- or direct seconds/minutes/hours input
+
+Store:
+- auto_delete_enabled = True
+- auto_delete_after_seconds = parsed value
+
+If No:
+- auto_delete_enabled = False
+
+IMPORTANT:
+- Keep admin flow simple
+- Reuse existing creation flow safely
+- Do NOT redesign everything
+
+==================================================
+PART 5 — ADMIN COMMANDS / ADMIN PANEL
+==================================================
+
+Add admin-only visibility and controls.
+
+Commands or panel options may include:
+
+1. /broadcastdeliveries <id>
+→ show delivery summary for a broadcast:
+- sent count
+- pending delete count
+- deleted count
+- failed delete count
+
+2. /autodeletestats
+→ global delete stats:
+- total pending
+- total deleted
+- total failed
+
+3. In broadcast list/details, show:
+- auto delete enabled or not
+- delete after time
+
+Integrate safely into existing admin panel:
+- 🗑 Auto Delete Stats
+- 📦 Broadcast Deliveries
+
+Do NOT break current Phase 1 controls.
+
+==================================================
+PART 6 — REPEAT BROADCAST COMPATIBILITY
+==================================================
+
+For repeating broadcasts:
+- each repeated send must create its own delivery records
+- each delivery record must have its own delete_at
+- deleting a previous run must NOT affect future runs
+- pause/resume/cancel repeat jobs must still work normally
+
+==================================================
+PART 7 — FAILURE HANDLING
+==================================================
+
+Handle safely:
+- message already deleted
+- bot blocked
+- message cannot be deleted
+- invalid message id
+- Telegram API errors
+
+Rules:
+- mark failed delete in DB
+- log the error
+- do not retry forever unless a safe retry policy already exists
+- do not crash scheduler
+
+==================================================
+PART 8 — LOGGING
+==================================================
+
+Log:
+- delivery record created
+- auto delete scheduled
+- delete success
+- delete failure
+- delete skipped
+- admin viewing delete stats
+
+Keep logs useful and production-friendly.
+
+==================================================
+PART 9 — SAFETY RULES
+==================================================
+
+- Delete only messages created by broadcast sends
+- Do NOT delete user messages
+- Do NOT touch downloader messages
+- Do NOT touch admin control messages unless they were sent by scheduled broadcast
+- Keep all current systems backward-compatible
+- Do NOT break existing Phase 1 broadcast scheduling
+
+==================================================
+PART 10 — OUTPUT
+==================================================
+
+- Show only changed files
+- Provide full updated code for changed files only
+- Explain:
+  1. how delivery tracking works
+  2. how auto delete scheduling works
+  3. how delete stats work
+  4. how repeat broadcasts stay compatible
+  5. what safety checks prevent wrong deletions
+
+==================================================
+TEST CASES
+==================================================
+
+1. Create one-time text broadcast with auto delete after short delay
+2. Confirm delivery records are saved
+3. Confirm bot deletes broadcast messages after delay
+4. Create repeat broadcast with auto delete
+5. Confirm each run creates separate delivery records
+6. Pause/resume/cancel still works
+7. Failed deletions are logged and do not crash bot
+8. Non-broadcast messages are never deleted

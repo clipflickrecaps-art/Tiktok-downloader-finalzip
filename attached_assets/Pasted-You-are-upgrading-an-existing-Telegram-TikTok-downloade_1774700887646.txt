@@ -1,0 +1,92 @@
+You are upgrading an existing Telegram TikTok downloader bot on Replit.
+
+CRITICAL RULES:
+- This is NOT a new project
+- DO NOT rebuild from scratch
+- DO NOT remove any existing working functions
+- DO NOT break current bot behavior
+- DO NOT redesign the whole architecture
+- KEEP the existing command flow and admin flow
+- Only perform Step 3 in this upgrade
+- This must be a safe internal stability upgrade
+
+CURRENT STEP:
+Step 3 only — stabilize the downloader engine and improve request/response handling.
+
+PROJECT CONTEXT:
+The bot is already running.
+Step 1 added logging.
+Step 2 migrated storage safely to SQLite.
+Now improve the TikTok download logic without changing the visible bot style too much.
+
+MAIN GOAL:
+Make the downloader more stable, reliable, and easier to debug while preserving the current behavior.
+
+REQUIRED CHANGES:
+
+1. Add TikTok URL validation
+- Detect whether the incoming message contains a valid TikTok URL
+- Accept common TikTok link formats such as:
+  - vt.tiktok.com
+  - www.tiktok.com
+  - m.tiktok.com
+  - vm.tiktok.com
+- If invalid, reply with a clean message like:
+  “Please send a valid TikTok link.”
+
+2. Improve request timeout handling
+- Add proper timeout values for all external HTTP requests
+- Avoid hanging forever
+- Log timeout failures clearly
+
+3. Validate downloader API responses carefully
+- Check HTTP status codes
+- Check JSON parsing safely
+- Check required fields before using them
+- If required data is missing, handle gracefully
+
+4. Improve failure classification
+- Distinguish between:
+  - invalid link
+  - private/unavailable video
+  - downloader API failure
+  - network timeout
+  - malformed API response
+  - download URL missing
+- Show user-friendly Telegram messages for each type
+- Do NOT expose raw traceback to users
+
+5. Keep the current provider if it already works
+- Do NOT replace the provider entirely unless necessary
+- Instead, wrap the current provider logic in safer validation and error handling
+
+6. Prevent duplicate processing where possible
+- Avoid processing the exact same incoming request multiple times accidentally
+- Keep this minimal and safe
+- Do not change the overall bot flow
+
+7. Improve logging
+- Log:
+  - link received
+  - validation passed/failed
+  - API request started
+  - API request failed
+  - response parsed
+  - media URL found / missing
+  - final user delivery success/failure
+
+8. Clean code
+- Prefer updating the existing download helper/service code
+- Keep minimal structural changes
+- Do not touch unrelated admin features
+
+9. At the end:
+- show which files were changed
+- show the full updated code for changed files
+- explain exactly how to test it manually in Replit
+- keep everything copy-paste ready
+
+OUTPUT FORMAT:
+- Full updated code for changed files only
+- Minimal safe edits
+- Backward-compatible implementation

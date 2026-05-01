@@ -1,0 +1,316 @@
+You are upgrading an EXISTING Telegram bot project built with aiogram on Replit.
+
+CRITICAL RULES:
+- This is NOT a new project
+- DO NOT rebuild from scratch
+- DO NOT remove any existing working features
+- DO NOT break downloader logic, UI, referral system, logging, database, role system, or admin system
+- KEEP all current architecture intact
+- Only EXTEND and IMPROVE safely
+
+==================================================
+BATCH 4 GOAL
+==================================================
+
+Implement the ADMIN-CONTROLLED FOUNDATION for:
+
+- Feature Flags
+- Threshold Lock System
+- Premium/VIP foundation
+- Monetization foundation (Option B)
+- Sponsor mode foundation (Option C)
+- Admin-panel-only settings control
+
+IMPORTANT:
+This batch is PREPARATION + FOUNDATION only.
+
+DO NOT fully activate:
+- Premium
+- Ads monetization
+- Sponsor/task mode
+- Business layer
+- Pro features
+- Force join
+
+Only prepare them safely with feature flags and threshold locks.
+
+==================================================
+PART 1 — FEATURE FLAGS SYSTEM
+==================================================
+
+Add a feature flags/settings system in SQLite.
+
+Create a settings table if needed, for example:
+- key TEXT PRIMARY KEY
+- value TEXT
+- updated_at TEXT
+
+Store flags such as:
+- cooldown_enabled
+- force_join_enabled
+- premium_enabled
+- monetization_enabled
+- sponsor_mode_enabled
+- business_layer_enabled
+- pro_features_enabled
+
+IMPORTANT:
+- Set safe defaults
+- Current active features should remain active only if already enabled now
+- Future systems must default to OFF
+
+==================================================
+PART 2 — THRESHOLD LOCK SYSTEM
+==================================================
+
+Implement user-count-based lock rules.
+
+Thresholds:
+- Force Join → 500 users
+- Premium/VIP → 1000 users
+- Monetization (Option B) → 1000 users
+- Business Layer → 1000 users
+- Pro Features → 1000 users
+- Sponsor Mode (Option C) → 5000 users
+
+Requirements:
+- Admin panel must show whether each feature is:
+  - Locked
+  - Eligible
+  - Enabled
+  - Disabled
+- If user count is below threshold, admin cannot enable locked features
+- Show current total user count in admin panel
+
+==================================================
+PART 3 — ADMIN PANEL CONTROL ONLY
+==================================================
+
+All future systems must be controlled only from the admin panel bot.
+
+Requirements:
+- Add an admin settings section
+- Show feature flags and thresholds
+- Allow owner/admin to view lock status
+- Only allow eligible features to be enabled
+- Keep role permissions safe
+
+Suggested admin-only controls:
+- View Feature Flags
+- View Current User Count
+- View Threshold Lock Status
+- Enable/Disable eligible feature
+- View why a feature is locked
+
+IMPORTANT:
+- Normal users must not control any of this
+- Keep existing admin system intact
+
+==================================================
+PART 4 — PREMIUM / VIP FOUNDATION (PREPARE ONLY)
+==================================================
+
+Prepare the database structure and helper functions for premium users.
+
+Suggested premium table:
+- user_id INTEGER PRIMARY KEY
+- is_premium INTEGER
+- premium_started_at TEXT
+- premium_expires_at TEXT
+- plan_name TEXT
+- granted_by INTEGER
+- updated_at TEXT
+
+Prepare helper functions:
+- is_premium(user_id)
+- get_premium_status(user_id)
+- grant_premium(user_id, days, plan_name, granted_by)
+- revoke_premium(user_id)
+
+Future premium rules to prepare:
+- bypass cooldown
+- bypass ads
+- higher quota
+
+IMPORTANT:
+- Do NOT fully activate premium flow now
+- Do NOT expose premium purchase flow to users yet
+- Only prepare admin-controlled foundation
+
+==================================================
+PART 5 — PAYMENT ACCOUNT FOUNDATION (PREPARE ONLY)
+==================================================
+
+Prepare admin-managed payment account settings for future premium system.
+
+Store settings such as:
+- payment_method_name
+- account_name
+- account_number
+- instructions
+
+Prepare support for examples like:
+- Wave Pay
+- KPay
+- KBZ Pay
+- AYA Pay
+
+IMPORTANT:
+- Admin panel only
+- No user-facing premium purchase flow yet unless only a placeholder is already safe
+- Do not activate billing flow now
+
+==================================================
+PART 6 — MONETIZATION FOUNDATION / OPTION B (PREPARE ONLY)
+==================================================
+
+Prepare monetization logic for future activation after 1000 users.
+
+Future logic:
+- Each user gets 3 free downloads per day
+- After first 3 downloads, require one ad action
+- One ad unlocks the next 10 downloads
+- After every additional 10 downloads, require one more ad action
+- Daily reset
+
+Create safe database structure for future use, for example:
+- user_id
+- date
+- free_download_count
+- ad_unlock_count
+- unlocked_until_count
+- ad_required_now
+- updated_at
+
+Prepare helper functions such as:
+- get_daily_usage(user_id)
+- increment_download_usage(user_id)
+- check_ad_requirement(user_id)
+- register_ad_unlock(user_id)
+
+IMPORTANT:
+- DO NOT activate ads now
+- DO NOT block users now
+- Current free experience must remain unchanged
+- Only prepare structure
+
+==================================================
+PART 7 — TIKTOK IMAGE DOWNLOAD FUTURE HOOK
+==================================================
+
+Image/photo download currently remains FREE.
+
+Prepare a future hook so that after 1000 users, image download may later be controlled by:
+- ads
+- premium
+- hybrid mode
+
+For now:
+- image download must remain FREE
+- no ad requirement
+- no premium lock
+
+Only prepare helper structure such as:
+- check_image_access(user_id)
+
+Current behavior:
+- always allow image download
+
+==================================================
+PART 8 — SPONSOR MODE / OPTION C FOUNDATION (PREPARE ONLY)
+==================================================
+
+Prepare sponsor/task mode structure for future activation after 5000 users.
+
+Examples:
+- sponsor_mode_enabled flag
+- sponsor task settings
+- sponsor text/link storage
+- reward mapping structure
+
+IMPORTANT:
+- DO NOT activate sponsor mode now
+- DO NOT expose it as a working user feature now
+- Admin panel may show it as LOCKED until 5000 users
+
+==================================================
+PART 9 — COOLDOWN COMPATIBILITY
+==================================================
+
+Current cooldown is active now.
+
+Make sure future premium compatibility is prepared:
+- free users → current cooldown stays
+- premium users → future cooldown bypass or shorter cooldown
+
+Do NOT break current cooldown behavior.
+
+==================================================
+PART 10 — ADMIN UI / STATUS OUTPUT
+==================================================
+
+In admin panel, add a clean feature/threshold summary page such as:
+
+System Status:
+- Total Users: X
+
+Feature Flags:
+- Cooldown: Enabled
+- Force Join: Locked (500 required)
+- Premium: Locked / Eligible / Enabled
+- Monetization: Locked / Eligible / Enabled
+- Sponsor Mode: Locked (5000 required)
+
+Keep it readable and mobile-friendly.
+
+==================================================
+PART 11 — LOGGING
+==================================================
+
+Log:
+- settings initialized
+- feature flag changed
+- threshold check result
+- admin tried to enable locked feature
+- premium foundation actions
+- monetization foundation actions
+- payment account setting changes
+
+==================================================
+PART 12 — SAFETY RULES
+==================================================
+
+- Do NOT break current downloader flow
+- Do NOT break current user UI
+- Do NOT break current referral system
+- Do NOT activate monetization now
+- Do NOT activate premium now
+- Do NOT activate sponsor mode now
+- Keep all current features backward-compatible
+
+==================================================
+OUTPUT REQUIREMENTS
+==================================================
+
+- Show only changed files
+- Provide full updated code for changed files only
+- Keep modular structure
+- Explain:
+
+1. How feature flags work
+2. How threshold lock system works
+3. How admin panel controls future features
+4. How premium foundation is prepared but not active
+5. How monetization foundation is prepared but not active
+6. How sponsor mode foundation is prepared but not active
+
+==================================================
+TEST CASES
+==================================================
+
+1. Admin opens feature status page → sees user count + lock status
+2. Admin tries to enable premium below 1000 users → blocked
+3. Admin tries to enable sponsor mode below 5000 users → blocked
+4. Current downloader still works normally
+5. Current image download remains free
+6. Current cooldown still works

@@ -1,0 +1,84 @@
+You are upgrading an EXISTING Telegram bot project built with aiogram on Replit.
+
+CRITICAL RULES:
+- This is NOT a new project
+- DO NOT rebuild from scratch
+- DO NOT remove any existing working functions
+- DO NOT break the current downloader behavior
+- DO NOT break current admin panel behavior
+- DO NOT change the whole architecture unnecessarily
+- DO NOT change the main downloader flow
+- DO NOT change status logic, referral placeholder logic, or admin logic unless required for this UI update
+- KEEP everything currently working
+- Only make a minimal safe UI adjustment
+
+CURRENT TASK:
+Change ONLY the buttons shown in the /start screen from their current keyboard/button style into INLINE BUTTONS attached to the /start message.
+
+IMPORTANT:
+- Only the /start buttons should be changed to inline buttons
+- Do NOT redesign the rest of the bot
+- Do NOT convert every other button in the whole bot unless necessary for this exact /start UI update
+- Keep the rest of the bot unchanged as much as possible
+
+CURRENT /START BUTTONS TO KEEP:
+- 📘 အသုံးပြုနည်း
+- 👤 ကျွန်ုပ်၏ Status
+- 🎁 Invite / Referral
+
+REQUIRED CHANGES:
+
+1. /start message
+- Keep the existing /start text and style mostly the same
+- Do not rewrite everything unless needed for formatting
+- Attach InlineKeyboardMarkup directly under the /start message
+
+2. Convert only these buttons into inline buttons:
+- 📘 အသုံးပြုနည်း
+- 👤 ကျွန်ုပ်၏ Status
+- 🎁 Invite / Referral
+
+3. Layout:
+- First row: 📘 အသုံးပြုနည်း | 👤 ကျွန်ုပ်၏ Status
+- Second row: 🎁 Invite / Referral
+
+4. Callback handling
+- Add or update safe callback handlers for these buttons
+- Reuse existing guide/status/referral functions if possible
+- Do not duplicate large logic blocks
+- If these pages already exist, just call the existing logic
+
+5. Back button
+- If guide/status/referral pages already use a back button, keep it working
+- If needed, make back button return to the /start main inline menu safely
+
+6. Keep direct link sending behavior unchanged
+- Users must still be able to send TikTok links directly in chat as before
+- The new inline buttons must not block or replace the main downloader flow
+
+7. Logging
+- Log when:
+  - /start is opened
+  - guide button clicked
+  - status button clicked
+  - referral button clicked
+  - back button clicked
+
+8. Future threshold rules must remain unchanged
+- Force Join stays locked until 500 users
+- Premium/VIP stays locked until 1000 users
+- Business layer stays locked until 1000 users
+- Pro features stay locked until 1000 users
+- Option B stays locked until 1000 users
+- Option C stays locked until 5000 users
+- Do NOT activate any of these now
+- Do NOT expose locked systems as usable features
+
+9. Output requirements
+- Show only changed files
+- Provide full updated code for changed files only
+- Keep everything copy-paste ready
+- Explain how to test the /start inline buttons manually in Replit
+
+GOAL:
+Make the /start screen cleaner by changing only its visible menu buttons into inline buttons, while keeping the rest of the bot behavior unchanged.

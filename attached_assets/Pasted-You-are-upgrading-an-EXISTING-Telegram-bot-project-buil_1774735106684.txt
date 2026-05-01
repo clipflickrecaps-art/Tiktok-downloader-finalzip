@@ -1,0 +1,146 @@
+You are upgrading an EXISTING Telegram bot project built with aiogram.
+
+CRITICAL RULES:
+- DO NOT rebuild project
+- DO NOT remove existing features
+- KEEP downloader, UI, cooldown intact
+
+==================================================
+BATCH 3 GOAL
+==================================================
+
+Implement FULL REFERRAL SYSTEM with:
+
+- referral link tracking
+- invite counting
+- verification system (anti fake)
+- reward system
+- leaderboard
+- admin visibility
+
+==================================================
+PART 1 — REFERRAL LINK
+==================================================
+
+Generate referral link:
+
+t.me/{bot}?start=ref_{user_id}
+
+Store:
+- user_id
+- referred_by
+
+==================================================
+PART 2 — INVITE TRACKING
+==================================================
+
+When new user joins:
+
+- check if start parameter contains ref_id
+- assign inviter
+
+==================================================
+PART 3 — VERIFICATION SYSTEM (CRITICAL)
+==================================================
+
+A referral is VALID only if:
+
+1. user pressed /start
+2. user is not self-ref
+3. user is unique (not already counted)
+4. user account is new for this referral
+5. user performs at least 1 action (e.g., sends link)
+
+Optional:
+- delay validation (e.g., 30–60 sec)
+
+==================================================
+PART 4 — REWARD SYSTEM
+==================================================
+
+When valid invites reach:
+
+- 3 → mark ad-skip eligible (future only, DO NOT activate)
+- 10 → give premium 1 day
+- 50 → give premium 30 days
+
+Store:
+- reward given
+- prevent duplicate rewards
+
+==================================================
+PART 5 — PREMIUM SYSTEM (BASIC)
+==================================================
+
+Store:
+- is_premium
+- expire_time
+
+Check:
+- if expired → revert to free
+
+==================================================
+PART 6 — INACTIVE CLEANUP
+==================================================
+
+If referred users:
+- never use bot
+- or inactive for X days
+
+Then:
+- remove them from valid referrals
+- adjust count
+
+==================================================
+PART 7 — LEADERBOARD
+==================================================
+
+Track:
+- total valid invites per user
+
+Provide:
+Top inviters list (top 10)
+
+==================================================
+PART 8 — UI INTEGRATION
+==================================================
+
+Update "Invite / Referral" page:
+
+Show:
+- referral link
+- total invites
+- valid invites
+- rewards status
+
+==================================================
+PART 9 — LOGGING
+==================================================
+
+Log:
+- new referral
+- validation success
+- reward given
+- suspicious activity
+
+==================================================
+PART 10 — FUTURE RULES
+==================================================
+
+DO NOT ACTIVATE:
+
+- Ads skip → until 1000 users
+- Ads system → until 1000 users
+- Sponsor system → until 5000 users
+
+Only PREPARE flags.
+
+==================================================
+OUTPUT
+==================================================
+
+- Show changed files only
+- Provide working code
+- Explain referral flow
+- Explain validation logic
+- Explain reward triggers

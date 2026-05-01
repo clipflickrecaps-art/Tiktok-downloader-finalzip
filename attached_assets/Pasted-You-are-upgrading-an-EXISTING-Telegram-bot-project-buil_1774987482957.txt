@@ -1,0 +1,190 @@
+You are upgrading an EXISTING Telegram bot project built with aiogram on Replit.
+
+CRITICAL RULES:
+- This is NOT a new project
+- DO NOT rebuild from scratch
+- DO NOT remove any existing working functions
+- DO NOT break current TikTok downloader logic
+- DO NOT break image/video/audio support already working
+- DO NOT break cooldown, quota, referral, admin panel, roles, logging, feature flags, threshold locks, scheduler, or broadcast systems
+- KEEP the current architecture intact
+- ONLY refactor Facebook downloading into a separate provider/module safely
+
+==================================================
+GOAL
+==================================================
+
+Refactor the downloader so that Facebook downloading is handled by a SEPARATE dedicated provider/module, without affecting the existing TikTok downloader.
+
+IMPORTANT:
+- TikTok must continue working exactly as before
+- Facebook must be isolated into its own provider/module
+- Shared systems (cooldown, quota, temp files, logging) must still be reused
+- Only support PUBLIC / accessible Facebook videos
+- Do NOT attempt to bypass private/protected content
+
+==================================================
+PART 1 — ROUTER SEPARATION
+==================================================
+
+Update the current link routing safely:
+
+1. If TikTok link:
+   - route to existing TikTok downloader unchanged
+
+2. If Facebook link:
+   - route to new dedicated Facebook provider/module
+
+3. Otherwise:
+   - return current invalid link message
+
+IMPORTANT:
+- Keep routing clean and minimal
+- Do NOT mix TikTok and Facebook extraction logic in one messy block
+
+==================================================
+PART 2 — CREATE DEDICATED FACEBOOK MODULE
+==================================================
+
+Create a separate file/module if needed, for example:
+- facebook_downloader.py
+
+This module should:
+- accept a Facebook URL
+- detect / normalize link if needed
+- attempt extraction using a dedicated provider flow
+- return structured result:
+  - success/fail
+  - content type
+  - final media info
+  - error classification
+
+Keep it modular and isolated from TikTok logic.
+
+==================================================
+PART 3 — FACEBOOK PROVIDER FLOW
+==================================================
+
+Implement a provider-based Facebook extraction flow.
+
+Requirements:
+- use a dedicated Facebook extraction path
+- allow future fallback provider support
+- keep the first provider modular
+- if extraction fails, classify safely
+
+Suggested result categories:
+- success
+- unsupported
+- inaccessible/private/protected
+- extractor_failed
+
+IMPORTANT:
+- Do NOT classify everything as private
+- Only classify as private/protected if the provider/extractor clearly indicates that
+- Otherwise return a clean unsupported/extraction failure message
+
+==================================================
+PART 4 — PUBLIC FACEBOOK SUPPORT
+==================================================
+
+Support common PUBLIC Facebook video types when accessible:
+- facebook.com/watch/...
+- facebook.com/.../videos/...
+- fb.watch/...
+- facebook.com/share/v/... if provider can resolve it
+- public reels/video links if accessible
+
+Do NOT support:
+- private
+- friends-only
+- protected/DRM-only
+- login-required content
+
+==================================================
+PART 5 — SHARED SYSTEM REUSE
+==================================================
+
+The new Facebook module must still reuse current shared bot systems:
+
+- cooldown
+- quota/daily usage
+- temp file sending
+- logging
+- analytics/history if already present
+
+IMPORTANT:
+- Facebook downloads must count in the same current quota system
+- Do NOT create separate Facebook-only quota logic
+
+==================================================
+PART 6 — DOWNLOAD FLOW
+==================================================
+
+For Facebook links:
+
+1. validate route to Facebook provider
+2. apply existing cooldown/quota checks
+3. run Facebook provider extraction
+4. if success:
+   - download/send video
+   - clean temp files
+5. if failure:
+   - send clean user-facing message
+
+Possible clean messages:
+- ❌ Facebook video မရနိုင်ပါ
+- ❌ Facebook public video extractor မရသေးပါ
+- ❌ Supported Facebook video link ပို့ပါ
+
+Do NOT expose raw Python errors to users.
+
+==================================================
+PART 7 — LOGGING
+==================================================
+
+Log clearly:
+- facebook link received
+- facebook provider selected
+- extraction started
+- extraction success
+- extraction failure
+- classification result
+- send success/failure
+
+Keep logs separate enough that Facebook issues are easy to debug.
+
+==================================================
+PART 8 — BACKWARD COMPATIBILITY
+==================================================
+
+- TikTok downloader must remain unchanged
+- TikTok image download must remain unchanged
+- Audio extract must remain unchanged
+- Admin panel must remain unchanged
+- Scheduler/broadcast must remain unchanged
+- This is a safe modular refactor only
+
+==================================================
+PART 9 — OUTPUT REQUIREMENTS
+==================================================
+
+- Show only changed files
+- Provide full updated code for changed files only
+- Explain:
+  1. how routing is now separated
+  2. how the Facebook provider module works
+  3. how Facebook errors are classified
+  4. how TikTok logic was preserved
+
+==================================================
+TEST CASES
+==================================================
+
+1. TikTok video link → still works
+2. TikTok image link → still works
+3. Facebook public video link → uses Facebook module
+4. Facebook unsupported/private link → clean error
+5. Cooldown still applies
+6. Quota still applies
+7. Temp files still clean up

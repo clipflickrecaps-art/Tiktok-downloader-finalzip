@@ -1,0 +1,231 @@
+You are upgrading an EXISTING Telegram bot project built with aiogram on Replit.
+
+CRITICAL RULES:
+- This is NOT a new project
+- DO NOT rebuild from scratch
+- DO NOT remove or break any existing features
+- KEEP downloader, UI, admin panel, referral system, feature flags, threshold locks, and logging intact
+- ONLY extend the system safely
+
+==================================================
+BATCH 6 GOAL
+==================================================
+
+Implement the MONETIZATION SYSTEM using:
+
+1. Daily Free Usage Limit
+2. Ad Unlock System (simulated placeholder)
+3. Usage Tracking + Reset
+4. Future Premium Hook (not activated yet)
+
+This must work WITHOUT breaking existing flows.
+
+==================================================
+PART 1 — DAILY USAGE LIMIT SYSTEM
+==================================================
+
+Implement a daily usage quota for each user.
+
+Rules:
+- Each user gets 3 FREE downloads per day
+- After 3 uses → block further downloads
+
+Requirements:
+- Track per user:
+  - daily_used_count
+  - last_reset_date
+- Reset usage automatically when a new day starts
+
+Create helper functions:
+- get_daily_usage(user_id)
+- increment_usage(user_id)
+- reset_usage_if_needed(user_id)
+
+IMPORTANT:
+- This must be integrated into downloader flow BEFORE processing download
+
+==================================================
+PART 2 — BLOCK MESSAGE + UI
+==================================================
+
+When user exceeds limit:
+
+Send message like:
+
+"⚠️ You’ve reached your daily limit (3 downloads).
+Watch an ad to unlock 10 more downloads."
+
+Add button:
+- "🎥 Unlock 10 More"
+
+IMPORTANT:
+- Clean UI
+- Use inline keyboard
+- Do NOT break current menu system
+
+==================================================
+PART 3 — AD UNLOCK SYSTEM (PLACEHOLDER)
+==================================================
+
+Implement simulated ad unlock.
+
+When user clicks:
+"🎥 Unlock 10 More"
+
+System:
+- Instantly grants +10 extra downloads
+- Increase user quota
+- Track unlock count
+
+Store:
+- extra_quota
+- total_unlocks
+
+Helper functions:
+- add_extra_quota(user_id, amount)
+- get_remaining_quota(user_id)
+
+IMPORTANT:
+- This is placeholder (no real ads yet)
+- Structure must support future real ad integration
+
+==================================================
+PART 4 — TOTAL USAGE CALCULATION
+==================================================
+
+User total allowed downloads per day:
+
+total_limit = 3 + extra_quota
+
+Remaining:
+remaining = total_limit - daily_used_count
+
+Block only when remaining <= 0
+
+==================================================
+PART 5 — USER STATUS PAGE UPDATE
+==================================================
+
+Update existing "Status" or create one if needed.
+
+Show:
+- daily usage (e.g. 2 / 3)
+- extra unlocked (e.g. +10)
+- remaining downloads
+- total unlocks
+
+Example:
+
+"📊 Your Usage Today:
+Free Used: 2 / 3
+Extra Unlock: +10
+Remaining: 11
+Unlocks Today: 1"
+
+==================================================
+PART 6 — ADMIN CONTROL (OPTIONAL BUT IMPORTANT)
+==================================================
+
+Add admin panel controls:
+
+- Set daily free limit (default = 3)
+- Enable/disable ad system
+- View total unlock stats
+
+Store in settings table:
+- daily_free_limit
+- ad_system_enabled
+
+==================================================
+PART 7 — FUTURE PREMIUM HOOK
+==================================================
+
+Prepare for future premium:
+
+If user is premium:
+- ignore daily limit
+- ignore ad requirement
+
+DO NOT activate premium yet
+Only add logic placeholder:
+
+if is_premium(user_id):
+    allow unlimited
+
+==================================================
+PART 8 — INTEGRATION WITH DOWNLOADER
+==================================================
+
+Before processing download:
+
+1. reset_usage_if_needed(user_id)
+2. check remaining quota
+3. if 0 → show block UI
+4. if allowed → increment usage
+
+DO NOT break:
+- video download
+- image download
+- audio download
+
+==================================================
+PART 9 — LOGGING
+==================================================
+
+Log:
+- usage increment
+- quota reached
+- ad unlock clicked
+- extra quota granted
+
+==================================================
+PART 10 — DATABASE CHANGES
+==================================================
+
+Add or extend tables:
+
+user_usage:
+- user_id
+- daily_used_count
+- extra_quota
+- last_reset_date
+- total_unlocks
+
+settings:
+- daily_free_limit
+- ad_system_enabled
+
+==================================================
+PART 11 — SAFETY
+==================================================
+
+- No breaking existing features
+- No rewriting core system
+- Keep backward compatibility
+- Keep modular structure
+
+==================================================
+OUTPUT REQUIREMENTS
+==================================================
+
+- Show ONLY changed files
+- Provide FULL updated code for those files
+- Explain:
+
+1. How quota system works
+2. How reset works
+3. How unlock works
+4. How downloader is protected
+5. How premium hook will work later
+
+==================================================
+TEST CASES
+==================================================
+
+1. User downloads 3 times → allowed
+2. 4th time → blocked
+3. Click unlock → +10 quota
+4. Download again → works
+5. Next day → reset to 3
+6. Admin changes limit → reflected
+7. Downloader still works normally

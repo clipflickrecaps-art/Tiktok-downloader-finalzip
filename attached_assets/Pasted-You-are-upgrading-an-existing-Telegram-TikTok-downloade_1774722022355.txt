@@ -1,0 +1,149 @@
+You are upgrading an existing Telegram TikTok downloader bot project on Replit.
+
+CRITICAL RULES:
+- This is NOT a new project
+- DO NOT rebuild from scratch
+- DO NOT remove any existing working functions
+- DO NOT break the current bot behavior
+- DO NOT redesign the whole architecture
+- KEEP the current user flow and admin flow as much as possible
+- Only add safe, minimal, backward-compatible improvements
+- Existing downloader, logging, SQLite, temp file sending, anti-spam, admin UX, user UX, history, analytics, and backup/export features must continue to work
+
+CURRENT TASK:
+Perform Step 13 only — add Multi-Admin / Role System.
+
+IMPORTANT FUTURE RULE:
+This project will later add:
+- Step 8: Force Join
+- Step 10: Premium / VIP
+- Step 15: Business Layer
+- Step 16: Pro Features
+
+Those future features MUST be controllable only from the admin panel bot.
+Do not build those future features now, but design the role/admin system so it is ready for future admin-panel-only control.
+
+MAIN GOAL:
+Add a safe role-based admin system with minimal changes, while keeping current admin features working.
+
+==================================================
+ROLE SYSTEM REQUIREMENTS
+==================================================
+
+1. Add role-based admin management with these roles:
+- owner
+- admin
+- support
+
+2. Create or extend SQLite tables safely
+Suggested table:
+admin_roles
+- user_id INTEGER PRIMARY KEY
+- role TEXT NOT NULL
+- added_at TEXT
+- added_by INTEGER
+
+3. Default behavior
+- The current main ADMIN_ID should become owner automatically if not already present
+- Existing admin flow must continue working
+
+4. Permission model
+Owner:
+- full access
+- can add/remove admins
+- can add/remove support users
+- can view all admin menus
+- can use all current admin tools
+- can manage future settings foundation
+
+Admin:
+- can use most operational admin features
+- stats
+- broadcast
+- ban/unban
+- exports
+- analytics
+- user management basic
+- cannot manage owner role
+- cannot change critical role system rules unless explicitly allowed
+
+Support:
+- limited access
+- can view stats if appropriate
+- can access limited support/user lookup features if available
+- cannot broadcast
+- cannot backup/export sensitive files unless explicitly allowed
+- cannot manage roles
+- cannot access owner-only controls
+
+==================================================
+IMPLEMENTATION REQUIREMENTS
+==================================================
+
+1. Add safe permission helper functions
+Examples:
+- is_owner(user_id)
+- is_admin(user_id)
+- is_support(user_id)
+- has_permission(user_id, action)
+
+2. Keep existing admin commands/features working
+- Do not remove current admin features
+- Instead, wrap them with role checks where appropriate
+
+3. Add admin role management tools inside admin panel
+Owner should be able to:
+- add admin
+- remove admin
+- add support
+- remove support
+- list admins/support roles
+
+4. Improve admin panel safely
+- Keep current style
+- Add a role management section
+- Keep labels clear and minimal
+
+5. Logging
+- Log role assignments
+- Log role removals
+- Log permission-denied events
+- Log admin actions safely
+
+6. Safety
+- Prevent owner from being accidentally removed unless there is another owner or unless the implementation explicitly protects the sole owner
+- Do not allow support users to access high-risk actions
+- Do not break current downloader flow
+- Do not break current user flow
+
+7. Future-ready admin control foundation
+- Add a clean settings/permissions structure or helper pattern so future Step 8, 10, 15, and 16 features can be controlled only from the admin panel bot
+- Do NOT implement those future features now
+- Just make the admin role system ready for them
+
+==================================================
+USER EXPERIENCE REQUIREMENTS
+==================================================
+
+1. Permission denied replies must be clean and short
+Examples:
+- "You do not have permission to use this feature."
+- "Owner access required."
+
+2. Do not expose internal permission logic to normal users
+
+==================================================
+OUTPUT REQUIREMENTS
+==================================================
+
+At the end:
+- show exactly which files were changed
+- provide full updated code for changed files only
+- explain how the role system works
+- explain how to test it manually in Replit
+- keep everything copy-paste ready
+
+OUTPUT FORMAT:
+- Full updated code for changed files only
+- Minimal safe edits
+- Backward-compatible implementation

@@ -1,0 +1,211 @@
+You are upgrading an EXISTING Telegram bot project built with aiogram on Replit.
+
+CRITICAL RULES:
+- This is NOT a new project
+- DO NOT rebuild from scratch
+- DO NOT remove any existing working functions
+- DO NOT break current TikTok downloader logic
+- DO NOT break image/video/audio support already working
+- DO NOT break cooldown, quota, referral, admin panel, roles, logging, feature flags, threshold locks, scheduler, or broadcast systems
+- KEEP the current architecture intact
+- ONLY extend the downloader safely
+
+==================================================
+GOAL
+==================================================
+
+Add FACEBOOK VIDEO DOWNLOAD support to the existing bot.
+
+IMPORTANT:
+- This must be added as a safe extension
+- TikTok downloader must keep working exactly as before
+- Facebook support must be modular
+- Only support PUBLIC / accessible Facebook videos
+- Do NOT try to bypass private/protected content
+- If a Facebook video is unavailable/private/protected, return a clean failure message
+
+==================================================
+PART 1 — SUPPORTED FACEBOOK LINKS
+==================================================
+
+Detect and support common public Facebook video link types such as:
+
+- facebook.com/watch/...
+- facebook.com/.../videos/...
+- fb.watch/...
+- m.facebook.com/.../videos/...
+- reels links if publicly accessible
+
+If link is not TikTok and not a supported Facebook video link:
+- keep current invalid link behavior
+
+==================================================
+PART 2 — LINK ROUTING
+==================================================
+
+Update the current downloader router logic safely:
+
+1. If TikTok link:
+   - use existing TikTok flow unchanged
+
+2. If Facebook video link:
+   - route to new Facebook downloader flow
+
+3. If unsupported:
+   - return clean invalid link message
+
+IMPORTANT:
+- Do NOT merge everything into one messy block
+- Keep TikTok and Facebook handling clearly separated
+
+==================================================
+PART 3 — FACEBOOK DOWNLOADER MODULE
+==================================================
+
+Create or extend a dedicated helper/module for Facebook downloading.
+
+Suggested file:
+- downloader.py (extend safely)
+OR
+- facebook_downloader.py (if cleaner)
+
+Requirements:
+- extract public Facebook video URL and metadata
+- download video safely to temp file
+- send it through Telegram
+- clean temp files after sending
+
+If existing project already uses yt-dlp safely, reuse it for Facebook if appropriate.
+
+==================================================
+PART 4 — CONTENT SUPPORT RULES
+==================================================
+
+Support:
+- public Facebook video
+- public Facebook reel/video if accessible
+
+Do NOT support:
+- private videos
+- friends-only videos
+- protected/DRM content
+- anything inaccessible to the bot
+
+If unavailable/private:
+Reply with a clean message such as:
+"❌ Facebook video မရနိုင်ပါ (private, unavailable, or protected)."
+
+==================================================
+PART 5 — DOWNLOAD FLOW
+==================================================
+
+For valid public Facebook video links:
+
+1. validate link
+2. apply existing cooldown/quota flow
+3. process Facebook video
+4. send video to user
+5. clean temp files
+6. log success/failure
+
+IMPORTANT:
+- Facebook downloads must count within the same current quota/cooldown system
+- Do NOT create a separate quota system
+- Reuse current usage tracking safely
+
+==================================================
+PART 6 — USER MESSAGES
+==================================================
+
+Keep user-facing messages short and clean in Myanmar style.
+
+Examples:
+- "⏳ Processing..."
+- "✅ Download ready"
+- "❌ Facebook video မရနိုင်ပါ"
+- "❌ Supported Facebook video link ပို့ပါ"
+
+Do NOT expose raw Python errors or traceback to users.
+
+==================================================
+PART 7 — UI COMPATIBILITY
+==================================================
+
+Update user-facing help/start text only if needed and only minimally.
+
+If safe, update wording to reflect that the bot now supports:
+- TikTok video download
+- Facebook video download
+- Audio/MP3 extract (if already supported)
+
+IMPORTANT:
+- Do NOT redesign the whole UI
+- Do NOT break current reply keyboard / main menu
+- Minimal wording updates only
+
+==================================================
+PART 8 — LOGGING
+==================================================
+
+Log:
+- Facebook link received
+- Facebook link validated
+- Facebook download started
+- Facebook download success
+- Facebook download failure
+- inaccessible/private/protected video
+- cooldown/quota interactions
+
+Keep logs consistent with the current logger system.
+
+==================================================
+PART 9 — FILE HANDLING
+==================================================
+
+Use the existing temp file system if present:
+- temp_media/
+- cleanup after send
+- safe failure cleanup
+
+Do NOT leave temp files behind.
+
+==================================================
+PART 10 — SAFETY / COMPATIBILITY
+==================================================
+
+- Do NOT break TikTok video flow
+- Do NOT break TikTok image flow
+- Do NOT break audio extract
+- Do NOT break cooldown/quota
+- Do NOT break admin panel
+- Do NOT break referral system
+- Do NOT break scheduled systems
+
+This is a safe new provider integration only.
+
+==================================================
+PART 11 — OUTPUT REQUIREMENTS
+==================================================
+
+- Show only changed files
+- Provide full updated code for changed files only
+- Keep modular structure
+- Explain:
+  1. how Facebook link detection works
+  2. how Facebook download flow works
+  3. what types of Facebook content are supported
+  4. how private/unavailable content is handled
+  5. how TikTok logic was preserved
+
+==================================================
+TEST CASES
+==================================================
+
+1. Public Facebook video link → video downloads successfully
+2. Unsupported Facebook/private/protected link → clean error message
+3. TikTok video still works
+4. TikTok image still works
+5. Audio extract still works
+6. Cooldown still applies
+7. Quota still applies
+8. Temp files are cleaned

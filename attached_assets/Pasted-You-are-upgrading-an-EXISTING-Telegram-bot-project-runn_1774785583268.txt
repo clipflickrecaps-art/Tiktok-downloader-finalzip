@@ -1,0 +1,109 @@
+You are upgrading an EXISTING Telegram bot project running on Replit (aiogram-based).
+
+CRITICAL RULES:
+- DO NOT rebuild project
+- DO NOT remove existing features
+- KEEP all bot logic intact (downloader, scheduler, broadcast, referral, admin panel)
+- ONLY extend system safely
+
+==================================================
+GOAL
+==================================================
+
+Fix 404 issue and implement FULL KEEP-ALIVE SYSTEM for production:
+
+1. Add web server (Flask)
+2. Add "/" route
+3. Add "/health" route
+4. Ensure server runs in background thread
+5. Integrate with bot startup
+6. Make it compatible with Replit deployment + UptimeRobot
+
+==================================================
+PART 1 — CREATE FILE: keep_alive.py
+==================================================
+
+Create a new file:
+
+keep_alive.py
+
+Code:
+
+- Use Flask
+- Run server on 0.0.0.0:8080
+- Add routes:
+
+"/" → return "Bot is running 🚀"
+"/health" → return "OK"
+
+- Run Flask in a separate thread (Thread)
+- Do NOT block bot execution
+
+==================================================
+PART 2 — MODIFY MAIN ENTRY FILE
+==================================================
+
+In main.py (or bot entry file):
+
+1. Import:
+    from keep_alive import keep_alive
+
+2. Call keep_alive() BEFORE bot polling starts
+
+Example order:
+- load env
+- init bot
+- start keep_alive()
+- start polling
+
+==================================================
+PART 3 — SAFETY RULES
+==================================================
+
+- DO NOT block event loop
+- DO NOT break aiogram polling
+- DO NOT change bot architecture
+- DO NOT change scheduler logic
+- MUST run alongside bot
+
+==================================================
+PART 4 — DEPLOYMENT COMPATIBILITY
+==================================================
+
+Ensure:
+- Works with Replit Autoscale deployment
+- Works with UptimeRobot HTTP monitor
+- Works even after restart
+
+==================================================
+PART 5 — OUTPUT
+==================================================
+
+- Provide FULL keep_alive.py file
+- Provide updated main.py snippet (only changed part)
+- Explain briefly how it works
+
+==================================================
+TEST CASE
+==================================================
+
+After deployment:
+
+1. Open:
+   https://<your-domain>/
+   → must show: Bot is running 🚀
+
+2. Open:
+   https://<your-domain>/health
+   → must show: OK
+
+3. Bot must still work in Telegram
+
+4. No crash, no blocking
+
+==================================================
+IMPORTANT
+==================================================
+
+This is PRODUCTION FIX.
+Code must be clean, minimal, and stable.
