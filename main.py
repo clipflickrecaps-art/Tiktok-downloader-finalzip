@@ -519,39 +519,75 @@ async def btn_premium_handler(message: types.Message):
 
 # ─── Admin keyboard — Analytics ──────────────────────────────────────────────
 
+_PLAT_LABEL = {
+    "video":          "🎵 TikTok Video",
+    "audio":          "🎵 TikTok Audio",
+    "youtube_video":  "▶️ YouTube",
+    "facebook_video": "📘 Facebook",
+    "direct_link":    "🔗 Direct Link",
+}
+
 @dp.message(Command("stats"))
 async def stats_command_handler(message: types.Message):
     uid = message.from_user.id
     if not roles.has_permission(uid, roles.PERM_ANALYTICS):
         return
     try:
-        data = db.get_analytics()
-        from database import _connect
-        with _connect() as conn:
-            rows = conn.execute(
-                "SELECT media_type, COUNT(*) AS c FROM downloads "
-                "WHERE status='success' GROUP BY media_type ORDER BY c DESC LIMIT 10"
-            ).fetchall()
-        breakdown = "\n".join(
-            f"  • {(r['media_type'] or 'unknown')}: {r['c']:,}" for r in rows
-        ) or "  • ဒေတာ မရှိသေး"
+        data    = db.get_analytics()
         total   = data.get("total_dl", 0)
         success = data.get("success_dl", 0)
         failed  = data.get("failed_dl", 0)
+        t_dl    = data.get("today_dl", 0)
+        t_ok    = data.get("today_success", 0)
         rate    = f"{success/total*100:.1f}%" if total else "—"
+        t_rate  = f"{t_ok/t_dl*100:.1f}%" if t_dl else "—"
+
+        # uptime
+        elapsed = int(time.time() - _BOT_START)
+        h, rem  = divmod(elapsed, 3600)
+        m, s    = divmod(rem, 60)
+        uptime  = f"{h}h {m}m {s}s"
+
+        # today platform summary
+        today_plat = data.get("today_platform", [])
+        if today_plat:
+            top_p = today_plat[0]
+            top_label = _PLAT_LABEL.get(top_p[0], top_p[0])
+            today_plat_line = f"  • Top platform: {top_label} ({top_p[1]:,} ပုဒ်)\n"
+        else:
+            today_plat_line = ""
+
+        # all-time breakdown
+        all_plat = data.get("all_platform", [])
+        breakdown = "\n".join(
+            f"  • {_PLAT_LABEL.get(t, t)}: {c:,}"
+            for t, c in all_plat
+        ) or "  • ဒေတာ မရှိသေး"
+
         text = (
-            "📊 <b>Bot Statistics</b>\n"
+            "📊 <b>Bot Dashboard</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"👥 <b>Users</b>\n"
-            f"  • Total:  {data.get('total_users', 0):,}\n"
-            f"  • Banned: {data.get('total_banned', 0):,}\n\n"
-            f"⬇️ <b>Downloads</b>\n"
-            f"  • Total:   {total:,}\n"
-            f"  • ✅ Success: {success:,}  ({rate})\n"
-            f"  • ❌ Failed:  {failed:,}\n"
-            f"  • 📅 Today:   {data.get('today_dl', 0):,}\n\n"
-            f"🎯 <b>Type Breakdown (Success)</b>\n"
-            f"{breakdown}"
+
+            "👥 <b>Users</b>\n"
+            f"  • Total:         {data.get('total_users', 0):,}\n"
+            f"  • Today new:     +{data.get('today_new_users', 0):,}\n"
+            f"  • ⭐ Premium:    {data.get('active_premium', 0):,} active\n"
+            f"  • 🚫 Banned:     {data.get('total_banned', 0):,}\n"
+            f"  • 🤝 Referrals:  {data.get('total_refs', 0):,}\n\n"
+
+            "📅 <b>Today</b>\n"
+            f"  • Downloads:     {t_dl:,}  (✅ {t_ok:,} · {t_rate})\n"
+            f"{today_plat_line}\n"
+
+            "⬇️ <b>All-time Downloads</b>\n"
+            f"  • Total:         {total:,}\n"
+            f"  • ✅ Success:    {success:,}  ({rate})\n"
+            f"  • ❌ Failed:     {failed:,}\n\n"
+
+            "🎯 <b>Platform Breakdown (Success)</b>\n"
+            f"{breakdown}\n\n"
+
+            f"⏱ <b>Uptime:</b> {uptime}"
         )
         await message.answer(text, parse_mode="HTML")
     except Exception as e:

@@ -574,25 +574,60 @@ def grant_yt_ad_unlock(user_id: int) -> None:
 # --- Analytics ---
 
 def get_analytics():
-    today = datetime.now(timezone.utc).date().isoformat()
+    today     = datetime.now(timezone.utc).date().isoformat()
+    now_iso   = datetime.now(timezone.utc).isoformat()
     try:
         with _connect() as conn:
             total_users     = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+            today_new_users = conn.execute(
+                "SELECT COUNT(*) FROM users WHERE joined_at LIKE ?", (f"{today}%",)
+            ).fetchone()[0]
             total_banned    = conn.execute("SELECT COUNT(*) FROM banned_users").fetchone()[0]
+            active_premium  = conn.execute(
+                "SELECT COUNT(*) FROM premium WHERE expires_at > ?", (now_iso,)
+            ).fetchone()[0]
             total_dl        = conn.execute("SELECT COUNT(*) FROM downloads").fetchone()[0]
-            success_dl      = conn.execute("SELECT COUNT(*) FROM downloads WHERE status='success'").fetchone()[0]
-            failed_dl       = conn.execute("SELECT COUNT(*) FROM downloads WHERE status='failed'").fetchone()[0]
+            success_dl      = conn.execute(
+                "SELECT COUNT(*) FROM downloads WHERE status='success'"
+            ).fetchone()[0]
+            failed_dl       = conn.execute(
+                "SELECT COUNT(*) FROM downloads WHERE status='failed'"
+            ).fetchone()[0]
             today_dl        = conn.execute(
                 "SELECT COUNT(*) FROM downloads WHERE created_at LIKE ?", (f"{today}%",)
             ).fetchone()[0]
+            today_success   = conn.execute(
+                "SELECT COUNT(*) FROM downloads WHERE status='success' AND created_at LIKE ?",
+                (f"{today}%",)
+            ).fetchone()[0]
+            # Top platform today
+            plat_rows = conn.execute(
+                """SELECT media_type, COUNT(*) AS c FROM downloads
+                   WHERE status='success' AND created_at LIKE ?
+                   GROUP BY media_type ORDER BY c DESC LIMIT 3""",
+                (f"{today}%",)
+            ).fetchall()
+            # All-time platform breakdown
+            all_rows = conn.execute(
+                """SELECT media_type, COUNT(*) AS c FROM downloads
+                   WHERE status='success'
+                   GROUP BY media_type ORDER BY c DESC LIMIT 6"""
+            ).fetchall()
+            total_refs = conn.execute("SELECT COUNT(*) FROM referrals").fetchone()[0]
         log.info("Analytics generated")
         return {
-            "total_users":    total_users,
-            "total_banned":   total_banned,
-            "total_dl":       total_dl,
-            "success_dl":     success_dl,
-            "failed_dl":      failed_dl,
-            "today_dl":       today_dl,
+            "total_users":      total_users,
+            "today_new_users":  today_new_users,
+            "total_banned":     total_banned,
+            "active_premium":   active_premium,
+            "total_dl":         total_dl,
+            "success_dl":       success_dl,
+            "failed_dl":        failed_dl,
+            "today_dl":         today_dl,
+            "today_success":    today_success,
+            "today_platform":   [(r["media_type"] or "unknown", r["c"]) for r in plat_rows],
+            "all_platform":     [(r["media_type"] or "unknown", r["c"]) for r in all_rows],
+            "total_refs":       total_refs,
         }
     except Exception as e:
         log.error(f"get_analytics failed: {e}")
