@@ -3293,7 +3293,8 @@ async def _run_webhook(domain: str):
         return web.Response(text="OK")
 
     # ── Mini App: init module + register routes ───────────────────────────────
-    miniapp.init(bot, API_TOKEN, domain)
+    _me = await bot.get_me()
+    miniapp.init(bot, API_TOKEN, domain, bot_username=_me.username or "")
 
     app = web.Application()
     app.router.add_get("/", _handle_root)

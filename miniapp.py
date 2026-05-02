@@ -39,19 +39,21 @@ from logger import log
 
 # ─── Module state ─────────────────────────────────────────────────────────────
 
-_bot       = None
-_bot_token = ""
-_domain    = ""
-_ffmpeg    = shutil.which("ffmpeg") or ""
+_bot          = None
+_bot_token    = ""
+_domain       = ""
+_bot_username = ""
+_ffmpeg       = shutil.which("ffmpeg") or ""
 _sem: asyncio.Semaphore | None = None
 
 
-def init(bot, bot_token: str, domain: str) -> None:
-    global _bot, _bot_token, _domain, _sem
-    _bot       = bot
-    _bot_token = bot_token
-    _domain    = domain
-    _sem       = asyncio.Semaphore(4)
+def init(bot, bot_token: str, domain: str, bot_username: str = "") -> None:
+    global _bot, _bot_token, _domain, _bot_username, _sem
+    _bot          = bot
+    _bot_token    = bot_token
+    _domain       = domain
+    _bot_username = bot_username
+    _sem          = asyncio.Semaphore(4)
     log.info(f"[MiniApp] initialised — https://{domain}/app")
 
 
@@ -269,6 +271,18 @@ h2{font-size:.9rem;font-weight:600;color:var(--sub);margin:16px 0 8px;
   border-radius:20px;padding:3px 12px;font-size:.76rem;font-weight:600}
 .free-badge{color:var(--sub);font-size:.8rem}
 .loading{text-align:center;color:var(--sub);padding:32px 0;font-size:.88rem}
+
+/* ── share button ── */
+.share-btn{width:100%;margin-top:10px;background:linear-gradient(135deg,#0e6aa8,#1877f2);
+  border:none;border-radius:10px;padding:11px;color:#fff;font-size:.88rem;
+  font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;
+  gap:6px;transition:opacity .15s}
+.share-btn:active{opacity:.8}
+.share-bot-btn{width:100%;margin-top:4px;background:var(--card2);border:1.5px solid var(--blue);
+  border-radius:10px;padding:11px;color:var(--blue);font-size:.88rem;font-weight:600;
+  cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;
+  transition:background .15s}
+.share-bot-btn:active{background:#1c2a3d}
 </style>
 </head>
 <body>
@@ -312,6 +326,9 @@ h2{font-size:.9rem;font-weight:600;color:var(--sub);margin:16px 0 8px;
     <div id="lcard">
       <div id="lanchor"></div>
       <div class="lnote">⚠️ CDN link ယာယီဖြစ်သဖြင့် မကြာမီ expire ဖြစ်မည်<br>Browser / Download Manager ဖြင့် Save လုပ်ပါ</div>
+      <button id="share-link-btn" class="share-btn" onclick="shareLink()" style="display:none">
+        📤 Telegram Chat ထဲ Share ရန်
+      </button>
     </div>
 
     <div id="status"></div>
@@ -329,6 +346,9 @@ h2{font-size:.9rem;font-weight:600;color:var(--sub);margin:16px 0 8px;
     <h1>👤 ကျွန်ုပ်၏ Profile</h1>
     <p class="sub">Status · Quota · Premium</p>
     <div id="profile-content"><div class="loading">⏳ ခဏစောင့်ပါ…</div></div>
+    <button class="share-bot-btn" onclick="shareBot()">
+      📤 Bot ကို မိတ်ဆွေများထံ Share ရန်
+    </button>
   </div>
 
 </div>
@@ -498,8 +518,10 @@ async function doDownload(type) {
     const r = await post("/api/dl", {url, platform, height: selH, type, init_data: initData});
     if (!r.ok) throw new Error(r.error);
     if (r.link) {
+      _sharedLink = r.link;
       document.getElementById("lanchor").innerHTML =
         '<a href="' + r.link + '" target="_blank">⬇️ ဒေါင်းရန် ဤနေရာနှိပ်ပါ</a>';
+      document.getElementById("share-link-btn").style.display = "";
       show("lcard");
       setStatus("ok", "✅ CDN link ရရှိပြီ — Browser ဖြင့် Save လုပ်ပါ");
     } else {
@@ -592,6 +614,24 @@ async function loadProfile() {
   }
 }
 
+/* ── Share ── */
+let _sharedLink = "";
+function shareLink() {
+  if (!_sharedLink) return;
+  const text = "🎬 Video download link (ywt-dlp via TikTokDownloaderBot)";
+  tg.openTelegramLink(
+    "https://t.me/share/url?url=" + encodeURIComponent(_sharedLink) +
+    "&text=" + encodeURIComponent(text)
+  );
+}
+function shareBot() {
+  const un = "__BOT_USERNAME__";
+  tg.openTelegramLink(
+    "https://t.me/share/url?url=" + encodeURIComponent("https://t.me/" + un) +
+    "&text=" + encodeURIComponent("🎬 TikTok · Facebook · YouTube ဗီဒီယို ဒေါင်းဆွဲနိုင်တဲ့ Bot！")
+  );
+}
+
 /* ── Utilities ── */
 async function post(path, body) {
   const r = await fetch(path, {method:"POST",
@@ -619,7 +659,8 @@ function esc(s)   { return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").
 # ─── Route handlers ───────────────────────────────────────────────────────────
 
 async def handle_app(request: web.Request) -> web.Response:
-    return _c(web.Response(text=_HTML, content_type="text/html"))
+    html = _HTML.replace("__BOT_USERNAME__", _bot_username or "TikTokDownloaderBot")
+    return _c(web.Response(text=html, content_type="text/html"))
 
 
 async def handle_api_info(request: web.Request) -> web.Response:
