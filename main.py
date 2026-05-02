@@ -849,6 +849,20 @@ async def export_history_handler(message: types.Message):
         await message.reply("❌ Export မအောင်မြင်ပါ။")
 
 
+@dp.message(Command("exporthistory"))
+async def cmd_exporthistory(message: types.Message):
+    uid = message.from_user.id
+    if not roles.has_permission(uid, roles.PERM_EXPORT):
+        log.warning(f"Permission denied: /exporthistory for {uid}")
+        return await message.reply(roles.DENIED_MSG)
+    log.info(f"/exporthistory requested by {uid}")
+    try:
+        await admin.export_history_csv(message)
+    except Exception as e:
+        log.error(f"/exporthistory handler failed: {e}")
+        await message.reply("❌ Export မအောင်မြင်ပါ။")
+
+
 # ─── Admin keyboard — Backup ──────────────────────────────────────────────────
 
 @dp.message(F.text == "💾 Backup DB")
@@ -3630,14 +3644,15 @@ async def _run_webhook(domain: str):
 
     try:
         await bot.set_my_commands([
-            BotCommand(command="start",     description="Bot ကို စတင်မည် / ပင်မစာမျက်နှာ"),
-            BotCommand(command="help",      description="အသုံးပြုနည်း / ဒေါင်းနည်း"),
-            BotCommand(command="myhistory", description="ကျွန်ုပ်၏ ဒေါင်းမှတ်တမ်း (နောက်ဆုံး ၁၀)"),
-            BotCommand(command="quota",     description="ယနေ့ Download Quota စစ်ကြည့်မည်"),
-            BotCommand(command="top",       description="🏆 Top Downloaders Leaderboard"),
-            BotCommand(command="feedback",  description="💬 Feedback / အကြံပြုချက် ပေးပို့မည်"),
+            BotCommand(command="start",         description="Bot ကို စတင်မည် / ပင်မစာမျက်နှာ"),
+            BotCommand(command="help",          description="အသုံးပြုနည်း / ဒေါင်းနည်း"),
+            BotCommand(command="myhistory",     description="ကျွန်ုပ်၏ ဒေါင်းမှတ်တမ်း (နောက်ဆုံး ၁၀)"),
+            BotCommand(command="quota",         description="ယနေ့ Download Quota စစ်ကြည့်မည်"),
+            BotCommand(command="top",           description="🏆 Top Downloaders Leaderboard"),
+            BotCommand(command="feedback",      description="💬 Feedback / အကြံပြုချက် ပေးပို့မည်"),
+            BotCommand(command="exporthistory", description="📤 Download history CSV export (Admin only)"),
         ])
-        log.info("[Bot] Commands menu registered (6 commands)")
+        log.info("[Bot] Commands menu registered (7 commands)")
     except Exception as _e:
         log.warning(f"[Bot] set_my_commands failed: {_e}")
 
