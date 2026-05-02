@@ -46,6 +46,11 @@ _bot_username = ""
 _ffmpeg       = shutil.which("ffmpeg") or ""
 _sem: asyncio.Semaphore | None = None
 
+# Direct-download token store  { token_filename -> (filepath, expires_at) }
+_dl_tokens: dict[str, tuple[str, float]] = {}
+_DL_TOKEN_TTL  = 600   # seconds tokens are valid
+_DL_DIRECT_MAX = 100   # MB cap for direct device download; larger → CDN link
+
 
 def init(bot, bot_token: str, domain: str, bot_username: str = "") -> None:
     global _bot, _bot_token, _domain, _bot_username, _sem
@@ -58,12 +63,14 @@ def init(bot, bot_token: str, domain: str, bot_username: str = "") -> None:
 
 
 def register_routes(app: web.Application) -> None:
-    app.router.add_get ("/app",          handle_app)
-    app.router.add_post("/api/info",     handle_api_info)
-    app.router.add_post("/api/dl",       handle_api_dl)
-    app.router.add_post("/api/history",  handle_api_history)
-    app.router.add_post("/api/profile",  handle_api_profile)
-    log.info("[MiniApp] routes: /app /api/info /api/dl /api/history /api/profile")
+    app.router.add_get ("/app",            handle_app)
+    app.router.add_post("/api/info",       handle_api_info)
+    app.router.add_post("/api/dl",         handle_api_dl)
+    app.router.add_post("/api/dl-direct",  handle_api_dl_direct)
+    app.router.add_post("/api/history",    handle_api_history)
+    app.router.add_post("/api/profile",    handle_api_profile)
+    app.router.add_get ("/files/{token}",  handle_files)
+    log.info("[MiniApp] routes: /app /api/info /api/dl /api/dl-direct /api/history /api/profile /files/{token}")
 
 
 # ─── initData validation ──────────────────────────────────────────────────────
@@ -272,6 +279,16 @@ h2{font-size:.9rem;font-weight:600;color:var(--sub);margin:16px 0 8px;
 .free-badge{color:var(--sub);font-size:.8rem}
 .loading{text-align:center;color:var(--sub);padding:32px 0;font-size:.88rem}
 
+/* ── mode toggle ── */
+.mode-row{display:flex;background:#21262d;border-radius:10px;padding:3px;
+  margin-bottom:12px;gap:3px}
+.mb{flex:1;border:none;border-radius:8px;padding:9px 4px;font-size:.84rem;
+  font-weight:600;cursor:pointer;color:var(--sub);background:transparent;
+  transition:all .2s}
+.mb.on{background:var(--blue);color:#fff}
+.dl-note{font-size:.71rem;color:var(--sub);text-align:center;margin:-6px 0 10px;
+  line-height:1.4}
+
 /* ── share button ── */
 .share-btn{width:100%;margin-top:10px;background:linear-gradient(135deg,#0e6aa8,#1877f2);
   border:none;border-radius:10px;padding:11px;color:#fff;font-size:.88rem;
@@ -311,14 +328,20 @@ h2{font-size:.9rem;font-weight:600;color:var(--sub);margin:16px 0 8px;
 
     <button id="infobtn" onclick="fetchInfo()">🔍 ဗီဒီယို အချက်အလက် ရယူမည်</button>
 
+    <div class="mode-row" id="mode-row" style="display:none">
+      <button class="mb on" id="mb-device" onclick="setMode('device')">⬇️ Device ထဲ သိမ်း</button>
+      <button class="mb"    id="mb-chat"   onclick="setMode('chat')">📨 Chat ထဲ ပို့</button>
+    </div>
+    <div class="dl-note" id="dl-note" style="display:none">Browser မှတဆင့် device ထဲ တိုက်ရိုက် download ချမည်</div>
+
     <div id="acts">
-      <button id="btn-v" class="act act-v" onclick="doDownload('video')">
+      <button id="btn-v" class="act act-v" onclick="doAction('video')">
         <span class="aico">📹</span>Video
       </button>
-      <button id="btn-a" class="act act-a" onclick="doDownload('audio')" style="display:none">
+      <button id="btn-a" class="act act-a" onclick="doAction('audio')" style="display:none">
         <span class="aico">🎵</span>Audio
       </button>
-      <button id="btn-t" class="act act-t" onclick="doDownload('thumb')" style="display:none">
+      <button id="btn-t" class="act act-t" onclick="doAction('thumb')" style="display:none">
         <span class="aico">🖼</span>Thumbnail
       </button>
     </div>
@@ -394,6 +417,7 @@ function onUrl() {
   const v = inp.value.trim();
   document.getElementById("clr").style.display = v ? "block" : "none";
   hide("pcard"); hide("acts"); hide("lcard"); hide("infobtn");
+  hide("mode-row"); hide("dl-note");
   setStatus(""); videoInfo = null; selH = 0;
   if (!v) return;
   platform = detect(v);
@@ -460,7 +484,6 @@ function showPlatCard(d) {
 /* ── Show action buttons based on platform ── */
 function showActions() {
   const acts  = document.getElementById("acts");
-  const btnV  = document.getElementById("btn-v");
   const btnA  = document.getElementById("btn-a");
   const btnT  = document.getElementById("btn-t");
 
@@ -476,11 +499,8 @@ function showActions() {
     acts.className = "act show cols3";
   } else {
     acts.className = "act show cols2";
-    /* Facebook: video only row — make it full width */
-    acts.className = "act show cols2";
-    btnV.style.gridColumn = "";
   }
-  show("acts");
+  show("mode-row"); show("dl-note"); show("acts");
 }
 
 /* ── Fetch YouTube info ── */
@@ -526,6 +546,51 @@ async function doDownload(type) {
       setStatus("ok", "✅ CDN link ရရှိပြီ — Browser ဖြင့် Save လုပ်ပါ");
     } else {
       setStatus("ok", "✅ " + (r.message || "Telegram chat ထဲ ပေးပို့ပြီးပါပြီ！"));
+    }
+  } catch (e) {
+    setStatus("err", "❌ " + e.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+/* ── Download mode (Device vs Chat) ── */
+let downloadMode = "device";
+function setMode(m) {
+  downloadMode = m;
+  ["device","chat"].forEach(t => {
+    document.getElementById("mb-"+t).classList.toggle("on", t === m);
+  });
+  document.getElementById("dl-note").textContent = m === "device"
+    ? "Browser မှတဆင့် device ထဲ တိုက်ရိုက် download ချမည်"
+    : "Bot မှတဆင့် Telegram chat ထဲ ဖိုင် ပေးပို့မည်";
+}
+async function doAction(type) {
+  if (downloadMode === "device") await doDirectDownload(type);
+  else await doDownload(type);
+}
+async function doDirectDownload(type) {
+  const url = inp.value.trim();
+  if (!url) return;
+  const btnId = {video:"btn-v", audio:"btn-a", thumb:"btn-t"}[type];
+  const btn = document.getElementById(btnId);
+  btn.disabled = true;
+  hide("lcard"); _sharedLink = "";
+  setStatus("proc", '<span class="sp"></span>ဒေါင်းနေသည်… ဖိုင်အရွယ်ပေါ် မူတည်၍ 30-120 sec ကြာနိုင်သည်');
+  try {
+    const r = await post("/api/dl-direct",
+      {url, platform, height: selH, type, init_data: initData});
+    if (!r.ok) throw new Error(r.error);
+    if (r.link) {
+      _sharedLink = r.link;
+      document.getElementById("lanchor").innerHTML =
+        '<a href="' + r.link + '" target="_blank">⬇️ CDN Link — ဒေါင်းရန် နှိပ်ပါ</a>';
+      document.getElementById("share-link-btn").style.display = "";
+      show("lcard");
+      setStatus("ok", "✅ ဖိုင်ကြီးသဖြင့် CDN link ရရှိပြီ — Browser ဖြင့် Save လုပ်ပါ");
+    } else if (r.url) {
+      tg.openLink(window.location.origin + r.url);
+      setStatus("ok", "✅ Browser ဖွင့်ပြီ — Allow / Save နှိပ်ပြီး ဒေါင်းပါ");
     }
   } catch (e) {
     setStatus("err", "❌ " + e.message);
@@ -800,6 +865,195 @@ async def handle_api_profile(request: web.Request) -> web.Response:
 
     profile = await asyncio.get_event_loop().run_in_executor(None, _build)
     return _c(_ok(profile=profile))
+
+
+# ─── Token / direct-download helpers ─────────────────────────────────────────
+
+def _purge_tokens() -> None:
+    now = time.time()
+    dead = [k for k, (fp, exp) in _dl_tokens.items() if now > exp]
+    for k in dead:
+        fp, _ = _dl_tokens.pop(k)
+        downloader.cleanup_file(fp)
+
+
+async def _download_file(
+    uid: int, url: str, platform: str, height: int, dl_type: str
+) -> tuple[str | None, str | None]:
+    """Download to a temp file. Returns (filepath, None) or (None, cdn_url)."""
+    if platform == "tiktok":
+        data = await downloader.fetch_tiktok_data(url)
+        if dl_type == "audio":
+            music = data.get("music")
+            if not music:
+                raise ValueError("Audio URL ရှာမတွေ့ပါ")
+            tmp = os.path.join(downloader.TEMP_DIR,
+                               f"dd_tta_{uid}_{int(time.time())}.mp3")
+            await downloader.download_to_file(music, tmp)
+            return tmp, None
+        else:
+            vurl   = data.get("play")
+            if not vurl:
+                raise ValueError("Video URL ရှာမတွေ့ပါ")
+            size_mb = (data.get("size") or 0) / (1024 * 1024)
+            if size_mb > _DL_DIRECT_MAX:
+                return None, vurl
+            tmp = os.path.join(downloader.TEMP_DIR,
+                               f"dd_tt_{uid}_{int(time.time())}.mp4")
+            await downloader.download_to_file(vurl, tmp)
+            return tmp, None
+
+    elif platform == "facebook":
+        result = await fb.download_facebook_video(url, uid, int(time.time()),
+                                                   vip_mode=False)
+        if not result.ok:
+            raise ValueError(result.user_msg or "Facebook ဒေါင်းမရပါ")
+        if result.size_mb and result.size_mb > _DL_DIRECT_MAX:
+            if result.filepath:
+                downloader.cleanup_file(result.filepath)
+            cdn = await fb.get_direct_url(url)
+            if cdn:
+                return None, cdn
+            raise ValueError(f"ဖိုင် {result.size_mb:.0f} MB ကြီး — CDN မရပါ")
+        return result.filepath, None
+
+    elif platform == "youtube":
+        if dl_type == "thumb":
+            info = await yt.fetch_youtube_info(url)
+            if not info.ok or not info.thumbnail:
+                raise ValueError("Thumbnail ရှာမတွေ့ပါ")
+            fp = await yt.download_thumbnail_from_url(
+                info.thumbnail, uid, int(time.time()))
+            if not fp:
+                raise ValueError("Thumbnail ဒေါင်းမရပါ")
+            return fp, None
+
+        elif dl_type == "audio":
+            tpl = os.path.join(downloader.TEMP_DIR,
+                               f"dd_yta_{uid}_{int(time.time())}.%(ext)s")
+            fp = await asyncio.get_event_loop().run_in_executor(
+                None, _yt_audio_sync, url, tpl)
+            if not fp:
+                raise ValueError("YouTube Audio ဒေါင်းမရပါ")
+            return fp, None
+
+        else:  # video
+            info   = await yt.fetch_youtube_info(url)
+            chosen = next((f for f in (info.formats or [])
+                           if f.height == height), None) if height else None
+            est_mb = chosen.size_mb if chosen else 0.0
+            if est_mb > _DL_DIRECT_MAX:
+                stream_url, _ = await yt.get_direct_url(url, height)
+                if stream_url:
+                    return None, stream_url
+                raise ValueError(f"ဖိုင် ~{est_mb:.0f} MB ကြီး — CDN မရပါ")
+            result = await yt.download_youtube_video(
+                url, uid, int(time.time()), height)
+            if not result.ok:
+                raise ValueError(result.user_msg or "YouTube ဒေါင်းမရပါ")
+            if result.size_mb > _DL_DIRECT_MAX:
+                if result.filepath:
+                    downloader.cleanup_file(result.filepath)
+                stream_url, _ = await yt.get_direct_url(url, height)
+                if stream_url:
+                    return None, stream_url
+                raise ValueError("ဖိုင်ကြီး — CDN မရပါ")
+            return result.filepath, None
+
+    raise ValueError("URL ပံ့ပိုးမထားပါ")
+
+
+async def handle_api_dl_direct(request: web.Request) -> web.Response:
+    try:
+        body = await request.json()
+    except Exception:
+        return _err("Invalid JSON")
+
+    user = _parse_init_data(body.get("init_data", ""))
+    if user is None:
+        return _err("Telegram auth failed", 401)
+
+    uid = user.get("id")
+    if not uid:
+        return _err("User ID missing", 401)
+    if db.is_banned(uid):
+        return _err("⛔ Bot အသုံးပြုခွင့် ပိတ်ထားသည်")
+
+    url      = (body.get("url") or "").strip()
+    platform = (body.get("platform") or "").strip()
+    height   = int(body.get("height") or 0)
+    dl_type  = (body.get("type") or "video").strip()
+
+    if not url:
+        return _err("URL required")
+
+    if not platform:
+        if yt.is_youtube_url(url):              platform = "youtube"
+        elif fb.is_facebook_url(url):           platform = "facebook"
+        elif downloader.TIKTOK_PATTERN.search(url): platform = "tiktok"
+        else: return _err("URL ပံ့ပိုးမထားပါ")
+
+    _purge_tokens()
+    assert _sem is not None
+    async with _sem:
+        try:
+            filepath, cdn_url = await asyncio.wait_for(
+                _download_file(uid, url, platform, height, dl_type),
+                timeout=180.0,
+            )
+        except asyncio.TimeoutError:
+            return _err("ဒေါင်းချိန် ကုန်ဆုံး — ထပ်ကြိုးစားပါ")
+        except ValueError as e:
+            return _err(str(e))
+        except Exception as e:
+            log.error(f"[MiniApp] dl-direct uid={uid}: {e}")
+            return _err(f"ဒေါင်းမရပါ — {e}")
+
+    if cdn_url:
+        db.log_download(uid, url, "direct_link", "success")
+        return _c(_ok(link=cdn_url))
+
+    import secrets
+    ext   = os.path.splitext(filepath)[1] or ".mp4"
+    token = secrets.token_hex(12) + ext
+    _dl_tokens[token] = (filepath, time.time() + _DL_TOKEN_TTL)
+    db.log_download(uid, url, dl_type, "success")
+    return _c(_ok(url=f"/files/{token}"))
+
+
+async def handle_files(request: web.Request) -> web.StreamResponse:
+    token = request.match_info["token"]
+    entry = _dl_tokens.pop(token, None)
+    if not entry:
+        raise web.HTTPNotFound(text="File expired or not found")
+    filepath, _ = entry
+    if not os.path.exists(filepath):
+        raise web.HTTPGone(text="File gone")
+
+    ext  = os.path.splitext(token)[1].lstrip(".").lower()
+    cmap = {"mp4": "video/mp4", "mp3": "audio/mpeg", "m4a": "audio/mp4",
+            "webm": "video/webm", "jpg": "image/jpeg", "jpeg": "image/jpeg",
+            "png": "image/png", "opus": "audio/ogg"}
+    ctype = cmap.get(ext, "application/octet-stream")
+    size  = os.path.getsize(filepath)
+    fname = os.path.basename(filepath)
+
+    resp = web.StreamResponse(headers={
+        "Content-Disposition": f'attachment; filename="{fname}"',
+        "Content-Type":        ctype,
+        "Content-Length":      str(size),
+        "Cache-Control":       "no-store",
+        "Access-Control-Allow-Origin": "*",
+    })
+    await resp.prepare(request)
+    try:
+        with open(filepath, "rb") as f:
+            while chunk := f.read(65536):
+                await resp.write(chunk)
+        await resp.write_eof()
+    finally:
+        downloader.cleanup_file(filepath)
+    return resp
 
 
 # ─── Download dispatcher ──────────────────────────────────────────────────────

@@ -496,6 +496,46 @@ async def btn_premium_handler(message: types.Message):
 
 # ─── Admin keyboard — Analytics ──────────────────────────────────────────────
 
+@dp.message(Command("stats"))
+async def stats_command_handler(message: types.Message):
+    uid = message.from_user.id
+    if not roles.has_permission(uid, roles.PERM_ANALYTICS):
+        return
+    try:
+        data = db.get_analytics()
+        from database import _connect
+        with _connect() as conn:
+            rows = conn.execute(
+                "SELECT media_type, COUNT(*) AS c FROM downloads "
+                "WHERE status='success' GROUP BY media_type ORDER BY c DESC LIMIT 10"
+            ).fetchall()
+        breakdown = "\n".join(
+            f"  • {(r['media_type'] or 'unknown')}: {r['c']:,}" for r in rows
+        ) or "  • ဒေတာ မရှိသေး"
+        total   = data.get("total_dl", 0)
+        success = data.get("success_dl", 0)
+        failed  = data.get("failed_dl", 0)
+        rate    = f"{success/total*100:.1f}%" if total else "—"
+        text = (
+            "📊 <b>Bot Statistics</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"👥 <b>Users</b>\n"
+            f"  • Total:  {data.get('total_users', 0):,}\n"
+            f"  • Banned: {data.get('total_banned', 0):,}\n\n"
+            f"⬇️ <b>Downloads</b>\n"
+            f"  • Total:   {total:,}\n"
+            f"  • ✅ Success: {success:,}  ({rate})\n"
+            f"  • ❌ Failed:  {failed:,}\n"
+            f"  • 📅 Today:   {data.get('today_dl', 0):,}\n\n"
+            f"🎯 <b>Type Breakdown (Success)</b>\n"
+            f"{breakdown}"
+        )
+        await message.answer(text, parse_mode="HTML")
+    except Exception as e:
+        log.error(f"[stats] error: {e}")
+        await message.reply("❌ Stats ထုတ်ရာတွင် အမှားဖြစ်သွားပါသည်")
+
+
 @dp.message(F.text == "📊 Analytics (စစ်ဆေးရန်)")
 async def analytics_handler(message: types.Message):
     uid = message.from_user.id
