@@ -19,25 +19,20 @@ def get_admin_keyboard(role: str = roles.OWNER) -> ReplyKeyboardMarkup:
     if role == roles.OWNER:
         buttons = [
             [KeyboardButton(text="📊 Analytics (စစ်ဆေးရန်)")],
-            [KeyboardButton(text="📢 Broadcast (စာပို့ရန်)"), KeyboardButton(text="🚫 Ban User")],
-            [KeyboardButton(text="🔓 Unban User"),            KeyboardButton(text="📤 Export Users")],
-            [KeyboardButton(text="📤 Export Banned"),         KeyboardButton(text="📤 Export History")],
-            [KeyboardButton(text="💾 Backup DB"),             KeyboardButton(text="⚙️ System Status")],
-            [KeyboardButton(text="👥 Manage Roles")],
-            [KeyboardButton(text="📡 Scheduled Jobs"),        KeyboardButton(text="📊 Broadcast Stats")],
-            [KeyboardButton(text="📢 Create Broadcast")],
-            [KeyboardButton(text="🗑 Auto Delete Stats"),      KeyboardButton(text="📦 Broadcast Deliveries")],
+            [KeyboardButton(text="🚫 Ban User"),              KeyboardButton(text="🔓 Unban User")],
+            [KeyboardButton(text="📤 Export Users"),          KeyboardButton(text="📤 Export Banned")],
+            [KeyboardButton(text="📤 Export History"),        KeyboardButton(text="💾 Backup DB")],
+            [KeyboardButton(text="⚙️ System Status"),         KeyboardButton(text="👥 Manage Roles")],
+            [KeyboardButton(text="📡 Scheduled Jobs"),        KeyboardButton(text="📢 Create Broadcast")],
+            [KeyboardButton(text="💎 Premium ပေးမည်"),        KeyboardButton(text="💎 Premium Users")],
         ]
     elif role == roles.ADMIN:
         buttons = [
             [KeyboardButton(text="📊 Analytics (စစ်ဆေးရန်)")],
-            [KeyboardButton(text="📢 Broadcast (စာပို့ရန်)"), KeyboardButton(text="🚫 Ban User")],
-            [KeyboardButton(text="🔓 Unban User"),            KeyboardButton(text="📤 Export Users")],
-            [KeyboardButton(text="📤 Export Banned"),         KeyboardButton(text="📤 Export History")],
-            [KeyboardButton(text="⚙️ System Status")],
-            [KeyboardButton(text="📡 Scheduled Jobs"),        KeyboardButton(text="📊 Broadcast Stats")],
-            [KeyboardButton(text="📢 Create Broadcast")],
-            [KeyboardButton(text="🗑 Auto Delete Stats"),      KeyboardButton(text="📦 Broadcast Deliveries")],
+            [KeyboardButton(text="🚫 Ban User"),              KeyboardButton(text="🔓 Unban User")],
+            [KeyboardButton(text="📤 Export Users"),          KeyboardButton(text="📤 Export Banned")],
+            [KeyboardButton(text="📤 Export History"),        KeyboardButton(text="⚙️ System Status")],
+            [KeyboardButton(text="📡 Scheduled Jobs"),        KeyboardButton(text="📢 Create Broadcast")],
         ]
     else:
         # SUPPORT — analytics only
@@ -216,6 +211,33 @@ async def send_premium_plans(message: types.Message):
     rows = st.list_premium_plans()
     text = st.format_premium_plans_text(rows)
     await message.reply(text, parse_mode="HTML")
+
+
+# --- Active premium users list ---
+
+async def send_active_premium_users(message: types.Message):
+    """Send the list of all currently active premium users to admin."""
+    log.info("Listing active premium users for admin")
+    rows = st.list_active_premium_users()
+    if not rows:
+        await message.reply("💎 ယခုအချိန် Premium user မရှိသေးပါ။")
+        return
+
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    lines = [f"💎 <b>Active Premium Users ({len(rows)})</b>\n━━━━━━━━━━━━━━━━"]
+    for r in rows:
+        exp     = datetime.fromisoformat(r["expires_at"])
+        days_left = max(0, (exp - now).days)
+        name    = r.get("first_name") or r.get("username") or "—"
+        plan    = r.get("plan_name") or r.get("reason") or "manual"
+        exp_str = exp.strftime("%Y-%m-%d")
+        lines.append(
+            f"• <code>{r['user_id']}</code> {name}\n"
+            f"  Plan: {plan} | Expires: {exp_str} ({days_left}d left)"
+        )
+    lines.append("━━━━━━━━━━━━━━━━")
+    await message.reply("\n".join(lines), parse_mode="HTML")
 
 
 # --- Legacy stats report (backward compat) ---

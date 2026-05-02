@@ -331,6 +331,26 @@ def get_premium_status(user_id: int) -> dict:
         return {"is_premium": False, "expires_at": None, "plan_name": None}
 
 
+def list_active_premium_users() -> list:
+    """Return all users with currently active (unexpired) premium, sorted by expiry."""
+    try:
+        now = datetime.now(timezone.utc)
+        with _connect() as conn:
+            rows = conn.execute(
+                """SELECT p.user_id, p.expires_at, p.plan_name, p.reason,
+                          p.granted_by, p.granted_at, u.username, u.first_name
+                   FROM premium p
+                   LEFT JOIN users u ON u.user_id = p.user_id
+                   WHERE p.expires_at > ?
+                   ORDER BY p.expires_at ASC""",
+                (now.isoformat(),),
+            ).fetchall()
+        return [dict(r) for r in rows]
+    except Exception as e:
+        log.error(f"list_active_premium_users failed: {e}")
+        return []
+
+
 # ─── Payment account (PREPARE ONLY — admin panel only) ───────────────────────
 
 PAYMENT_KEYS = {

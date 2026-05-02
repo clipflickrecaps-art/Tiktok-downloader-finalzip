@@ -496,15 +496,36 @@ async def analytics_handler(message: types.Message):
         await message.reply("❌ Analytics ထုတ်ရာတွင် အမှားဖြစ်သွားပါသည်။")
 
 
-# ─── Admin keyboard — Broadcast ──────────────────────────────────────────────
+# ─── Admin keyboard — Premium ဖြန့်ဝေရန် (Owner only) ───────────────────────
 
-@dp.message(F.text == "📢 Broadcast (စာပို့ရန်)")
-async def broadcast_button_handler(message: types.Message):
+@dp.message(F.text == "💎 Premium ပေးမည်")
+async def btn_give_premium(message: types.Message):
     uid = message.from_user.id
-    if not roles.has_permission(uid, roles.PERM_BROADCAST):
-        log.warning(f"Permission denied: broadcast button for {uid}")
-        return await message.reply(roles.DENIED_MSG)
-    await message.reply("/bc နောက်မှာ ပို့မည့်စာသားရေးပါ။\nဥပမာ - /bc မင်္ဂလာပါ")
+    if not roles.is_owner(uid):
+        return await message.reply(roles.OWNER_ONLY)
+    await message.reply(
+        "💎 <b>Premium ပေးနည်း</b>\n"
+        "━━━━━━━━━━━━━━━━\n"
+        "<code>/givepremium &lt;user_id&gt; &lt;days&gt; [reason]</code>\n\n"
+        "ဥပမာ:\n"
+        "<code>/givepremium 123456789 30 VIP Gift</code>\n"
+        "<code>/givepremium 123456789 7</code>\n\n"
+        "⚠️ Threshold မပြည့်ဘဲ တိုက်ရိုက်ပေးနိုင်သည်\n\n"
+        "Premium ရုပ်သိမ်းရန်:\n"
+        "<code>/revokepremium &lt;user_id&gt;</code>\n\n"
+        "User စစ်ကြည့်ရန်:\n"
+        "<code>/checkuser &lt;user_id&gt;</code>",
+        parse_mode="HTML",
+    )
+
+
+@dp.message(F.text == "💎 Premium Users")
+async def btn_premium_users(message: types.Message):
+    uid = message.from_user.id
+    if not roles.is_owner(uid):
+        return await message.reply(roles.OWNER_ONLY)
+    log.info(f"Owner {uid} viewed premium users list")
+    await admin.send_active_premium_users(message)
 
 
 # ─── Admin keyboard — Ban / Unban ─────────────────────────────────────────────
@@ -999,6 +1020,165 @@ async def roles_list_handler(message: types.Message):
         return await message.reply(roles.OWNER_ONLY)
     log.info(f"Owner {uid} requested role list")
     await admin.send_role_list(message)
+
+
+# ─── Admin commands — Premium management ─────────────────────────────────────
+
+@dp.message(Command("givepremium"))
+async def cmd_givepremium(message: types.Message, command: CommandObject):
+    """Grant premium to a user directly. Bypasses all threshold locks.
+
+    Usage: /givepremium <user_id> <days> [reason]
+    """
+    uid = message.from_user.id
+    if not roles.is_owner(uid):
+        return await message.reply(roles.OWNER_ONLY)
+
+    args = (command.args or "").strip().split(None, 2)
+    if len(args) < 2:
+        return await message.reply(
+            "❌ Usage: <code>/givepremium &lt;user_id&gt; &lt;days&gt; [reason]</code>\n\n"
+            "ဥပမာ: <code>/givepremium 123456789 30 VIP Gift</code>",
+            parse_mode="HTML",
+        )
+
+    try:
+        target_id = int(args[0])
+        days      = int(args[1])
+        if days < 1:
+            raise ValueError
+    except ValueError:
+        return await message.reply(
+            "❌ user_id နှင့် days သည် ဂဏန်းဖြစ်ရမည်။ days ≥ 1",
+        )
+
+    reason = args[2].strip() if len(args) > 2 else "admin_grant"
+
+    ok = st.grant_premium_admin(target_id, days, reason, granted_by=uid)
+    if not ok:
+        return await message.reply(f"❌ Premium ပေး၍မရပါ။ Logs စစ်ပါ။")
+
+    # Show resulting expiry
+    prem = st.get_premium_status(target_id)
+    exp_str = prem["expires_at"].strftime("%Y-%m-%d %H:%M UTC") if prem["expires_at"] else "?"
+
+    log.info(f"/givepremium: user {target_id} → {days}d '{reason}' by owner {uid}")
+    await message.reply(
+        f"✅ <b>Premium ပေးပြီးပါပြီ</b>\n"
+        f"━━━━━━━━━━━━━━━━\n"
+        f"👤 User ID: <code>{target_id}</code>\n"
+        f"📅 ရက်: <b>{days} ရက်</b>\n"
+        f"📋 Plan: {reason}\n"
+        f"⏰ Expires: {exp_str}",
+        parse_mode="HTML",
+    )
+
+
+@dp.message(Command("revokepremium"))
+async def cmd_revokepremium(message: types.Message, command: CommandObject):
+    """Remove premium from a user immediately.
+
+    Usage: /revokepremium <user_id>
+    """
+    uid = message.from_user.id
+    if not roles.is_owner(uid):
+        return await message.reply(roles.OWNER_ONLY)
+
+    raw = (command.args or "").strip()
+    if not raw or not raw.isdigit():
+        return await message.reply(
+            "❌ Usage: <code>/revokepremium &lt;user_id&gt;</code>",
+            parse_mode="HTML",
+        )
+
+    target_id = int(raw)
+
+    # Check if they actually have premium
+    prem = st.get_premium_status(target_id)
+    if not prem["is_premium"]:
+        return await message.reply(
+            f"ℹ️ User <code>{target_id}</code> တွင် Active premium မရှိပါ။",
+            parse_mode="HTML",
+        )
+
+    ok = st.revoke_premium(target_id, revoked_by=uid)
+    if not ok:
+        return await message.reply("❌ Premium ရုပ်သိမ်း၍မရပါ။")
+
+    log.info(f"/revokepremium: user {target_id} revoked by owner {uid}")
+    await message.reply(
+        f"✅ User <code>{target_id}</code> ၏ Premium ကို ရုပ်သိမ်းပြီးပါပြီ။",
+        parse_mode="HTML",
+    )
+
+
+@dp.message(Command("checkuser"))
+async def cmd_checkuser(message: types.Message, command: CommandObject):
+    """Show full info about a user — premium, ban, downloads, registration.
+
+    Usage: /checkuser <user_id>
+    """
+    uid = message.from_user.id
+    if not roles.is_admin_or_above(uid):
+        return await message.reply(roles.DENIED_MSG)
+
+    raw = (command.args or "").strip()
+    if not raw or not raw.isdigit():
+        return await message.reply(
+            "❌ Usage: <code>/checkuser &lt;user_id&gt;</code>",
+            parse_mode="HTML",
+        )
+
+    target_id = int(raw)
+    user_row  = db.get_user(target_id)
+    is_banned = db.is_banned(target_id)
+    dl_count  = db.get_user_download_count(target_id)
+    prem      = st.get_premium_status(target_id)
+    role      = roles.get_role(target_id)
+
+    if prem["is_premium"] and prem["expires_at"]:
+        prem_line = (
+            f"💎 Active | expires {prem['expires_at'].strftime('%Y-%m-%d')}"
+            f" ({prem['plan_name'] or 'manual'})"
+        )
+    else:
+        prem_line = "⬜ Free"
+
+    ban_line  = "🚫 Banned" if is_banned else "✅ Not banned"
+    role_line = f"🛠 {role}" if role else "👤 Regular user"
+
+    if user_row:
+        name     = user_row["first_name"] or "—"
+        username = f"@{user_row['username']}" if user_row["username"] else "—"
+        joined   = str(user_row["joined_at"])[:10]
+    else:
+        name = username = joined = "—"
+
+    await message.reply(
+        f"👤 <b>User Info</b>\n"
+        f"━━━━━━━━━━━━━━━━\n"
+        f"🆔 ID: <code>{target_id}</code>\n"
+        f"📛 Name: {name}\n"
+        f"🔗 Username: {username}\n"
+        f"📅 Joined: {joined}\n"
+        f"━━━━━━━━━━━━━━━━\n"
+        f"🏷 Role: {role_line}\n"
+        f"🚫 Ban: {ban_line}\n"
+        f"⭐ Premium: {prem_line}\n"
+        f"📥 Downloads: {dl_count}",
+        parse_mode="HTML",
+    )
+    log.info(f"/checkuser: target={target_id} queried by {uid}")
+
+
+@dp.message(Command("listpremium"))
+async def cmd_listpremium(message: types.Message):
+    """List all users with active premium."""
+    uid = message.from_user.id
+    if not roles.is_owner(uid):
+        return await message.reply(roles.OWNER_ONLY)
+    log.info(f"/listpremium called by owner {uid}")
+    await admin.send_active_premium_users(message)
 
 
 # ─── Image/photo-carousel sender ─────────────────────────────────────────────
