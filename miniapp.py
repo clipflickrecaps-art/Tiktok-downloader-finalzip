@@ -302,6 +302,21 @@ h2{font-size:.9rem;font-weight:600;color:var(--sub);margin:16px 0 8px;
   color:var(--sub);font-size:.82rem;cursor:pointer}
 .retry-btn:active{background:#21262d}
 
+/* ── thumbnail preview ── */
+.thumb-wrap{border-radius:10px;overflow:hidden;margin-bottom:10px;
+  background:#0d1117;max-height:180px}
+.thumb-wrap img{width:100%;max-height:180px;object-fit:cover;display:block}
+
+/* ── history filter ── */
+.hist-filter{display:flex;gap:6px;margin-bottom:12px;align-items:center}
+.hf{flex:1;padding:6px 2px;font-size:.7rem;font-weight:600;border-radius:8px;
+  border:1.5px solid var(--border);background:transparent;
+  color:var(--sub);cursor:pointer;text-align:center}
+.hf.on{background:var(--blue);color:#fff;border-color:var(--blue)}
+.hf-ref{padding:6px 10px;border-radius:8px;border:1.5px solid var(--border);
+  background:transparent;color:var(--sub);font-size:.8rem;cursor:pointer}
+.hf-ref:active{background:#21262d}
+
 /* ── empty state hint ── */
 .empty-hint{display:flex;flex-direction:column;align-items:center;
   padding:28px 20px 20px;gap:8px;text-align:center}
@@ -365,6 +380,7 @@ h2{font-size:.9rem;font-weight:600;color:var(--sub);margin:16px 0 8px;
     </div>
 
     <div id="pcard">
+      <div id="thumb-wrap" class="thumb-wrap" style="display:none"></div>
       <div id="pbadge" class="pbadge"></div>
       <div id="vtitle"></div>
       <div id="fmts">
@@ -403,6 +419,13 @@ h2{font-size:.9rem;font-weight:600;color:var(--sub);margin:16px 0 8px;
   <div id="tab-hist" class="panel">
     <h1>📋 Download History</h1>
     <p class="sub">ဒေါင်းခဲ့သော မှတ်တမ်းများ</p>
+    <div class="hist-filter">
+      <button class="hf on" id="hf-all" onclick="filterHist('all')">All</button>
+      <button class="hf" id="hf-tt" onclick="filterHist('tiktok')">🎵 TT</button>
+      <button class="hf" id="hf-fb" onclick="filterHist('facebook')">📘 FB</button>
+      <button class="hf" id="hf-yt" onclick="filterHist('youtube')">▶️ YT</button>
+      <button class="hf-ref" onclick="refreshHist()">🔄</button>
+    </div>
     <div id="hlist" class="hlist"><div class="loading">⏳ ခဏစောင့်ပါ…</div></div>
   </div>
 
@@ -500,6 +523,14 @@ async function pasteUrl() {
   } catch { inp.focus(); }
 }
 
+/* ── Auto-detect URL from clipboard on open ── */
+(async function tryAutoPaste() {
+  try {
+    const t = (await navigator.clipboard.readText() || "").trim();
+    if (t && detect(t)) { inp.value = t; onUrl(); }
+  } catch(e){}
+})();
+
 /* ── Show platform info card ── */
 function showPlatCard(d) {
   const cfg = {
@@ -532,6 +563,16 @@ function showPlatCard(d) {
     fmts.style.display = "block";
   } else {
     fmts.style.display = "none";
+  }
+  const tw = document.getElementById("thumb-wrap");
+  if (tw) {
+    if (d.thumbnail) {
+      tw.innerHTML = `<img src="${d.thumbnail}" alt="thumbnail"
+        onerror="this.parentNode.style.display='none'">`;
+      tw.style.display = "block";
+    } else {
+      tw.style.display = "none";
+    }
   }
   show("pcard");
 }
@@ -680,7 +721,49 @@ async function doDirectDownload(type) {
 }
 
 /* ── History ── */
-let histLoaded = false;
+let histLoaded = false, _allHistItems = [], _histFilter = "all";
+
+function filterHist(p) {
+  _histFilter = p;
+  const map = {all:"hf-all", tiktok:"hf-tt", facebook:"hf-fb", youtube:"hf-yt"};
+  document.querySelectorAll(".hf").forEach(b => b.classList.remove("on"));
+  const el = document.getElementById(map[p]);
+  if (el) el.classList.add("on");
+  renderHist();
+}
+
+function renderHist() {
+  const el = document.getElementById("hlist");
+  const items = _histFilter === "all" ? _allHistItems : _allHistItems.filter(i => {
+    const t = i.type || "";
+    if (_histFilter === "tiktok")   return t === "video" || t === "audio";
+    if (_histFilter === "facebook") return t === "facebook_video";
+    if (_histFilter === "youtube")  return t === "youtube_video";
+    return true;
+  });
+  if (!items.length) {
+    el.innerHTML = '<div class="empty">📭 မှတ်တမ်း မရှိပါ</div>';
+    return;
+  }
+  el.innerHTML = items.map(i =>
+    `<div class="hitem">
+      <span class="hico">${i.icon}</span>
+      <div class="hinfo">
+        <div class="htype">${fmtType(i.type)}</div>
+        <div class="htime">${i.time}</div>
+      </div>
+      <span class="hst">${i.status}</span>
+    </div>`
+  ).join("");
+}
+
+function refreshHist() {
+  histLoaded = false; _allHistItems = [];
+  document.getElementById("hlist").innerHTML =
+    '<div class="loading">⏳ ခဏစောင့်ပါ…</div>';
+  loadHistory();
+}
+
 async function loadHistory() {
   if (histLoaded) return;
   const el = document.getElementById("hlist");
@@ -691,16 +774,8 @@ async function loadHistory() {
     if (!r.items.length) {
       el.innerHTML = '<div class="empty">📭 ဒေါင်းမှတ်တမ်း မရှိသေးပါ</div>';
     } else {
-      el.innerHTML = r.items.map(i =>
-        `<div class="hitem">
-          <span class="hico">${i.icon}</span>
-          <div class="hinfo">
-            <div class="htype">${fmtType(i.type)}</div>
-            <div class="htime">${i.time}</div>
-          </div>
-          <span class="hst">${i.status}</span>
-        </div>`
-      ).join("");
+      _allHistItems = r.items;
+      renderHist();
     }
     histLoaded = true;
   } catch (e) {
@@ -736,6 +811,7 @@ async function loadProfile() {
         <div class="urole">${premBadge}</div>
         <div class="prow"><span class="plbl">User ID</span><span class="pval">${p.uid}</span></div>
         <div class="prow"><span class="plbl">ဒေါင်းပြီးသော စုစုပေါင်း</span><span class="pval">${p.total_dl} ခု</span></div>
+        <div class="prow"><span class="plbl">🤝 Referral ပေးပို့မှု</span><span class="pval">${p.ref_count || 0} ဦး</span></div>
         ${p.joined ? `<div class="prow"><span class="plbl">စတင်သည့်နေ့</span><span class="pval">${p.joined}</span></div>` : ""}
       </div>
       ${p.monetization ? `
@@ -879,6 +955,7 @@ async def handle_api_info(request: web.Request) -> web.Response:
         return _c(_ok(
             platform="youtube",
             title=info.title,
+            thumbnail=getattr(info, "thumbnail", ""),
             formats=[{"height": f.height, "label": f.label, "size_mb": f.size_mb}
                      for f in info.formats],
         ))
@@ -988,7 +1065,7 @@ async def handle_api_profile(request: web.Request) -> web.Response:
             (row["first_name"] if row else None),
             user.get("first_name"), user.get("last_name"),
         ])) or "User"
-        joined = (row["joined_at"][:10] if row and row.get("joined_at") else None)
+        joined = (row["joined_at"][:10] if row and row["joined_at"] else None)
 
         return {
             "uid": uid, "name": name, "joined": joined,
@@ -996,6 +1073,7 @@ async def handle_api_profile(request: web.Request) -> web.Response:
             "plan": plan, "expiry": expiry,
             "monetization": bool(monet),
             "used": used, "limit": limit if monet else 0, "yt_used": yt_used,
+            "ref_count": db.get_referral_count(uid),
         }
 
     profile = await asyncio.get_event_loop().run_in_executor(None, _build)

@@ -36,6 +36,10 @@ dp  = Dispatcher(storage=MemoryStorage())
 
 # ─── FSM: broadcast creation flow ─────────────────────────────────────────────
 
+class FeedbackFlow(StatesGroup):
+    waiting = State()
+
+
 class BroadcastFlow(StatesGroup):
     choosing_type       = State()   # admin picks text / photo / video
     waiting_content     = State()   # admin sends message content
@@ -45,7 +49,8 @@ class BroadcastFlow(StatesGroup):
     choosing_autodelete = State()   # admin picks Yes / No for auto-delete
     waiting_ad_delay    = State()   # admin enters auto-delete delay
 
-_processing: set = set()
+_processing:    set = set()
+_MINI_APP_URL: str = ""   # set once at startup
 
 # ─── YouTube pending requests cache (uid → {url, info}) ──────────────────────
 _yt_pending: dict = {}
@@ -91,6 +96,9 @@ HOWTO_TEXT = (
     "⌨️ <b>Commands</b>\n"
     "• /myhistory — ကျွန်ုပ်၏ ဒေါင်းမှတ်တမ်း\n"
     "• /quota — ယနေ့ Quota စစ်ကြည့်မည်\n"
+    "• /top — 🏆 Top Downloaders Leaderboard\n"
+    "• /feedback — 💬 Feedback ပေးပို့မည်\n"
+    "• /cancel — လုပ်ဆောင်မှု ဖျက်သိမ်းမည်\n"
     "• /referral — Referral link ရယူမည်\n\n"
     "⏱ <b>Cooldown:</b> တောင်းဆိုမှုတစ်ခုပြီးနောက် "
     f"{cd.COOLDOWN_SECONDS} seconds စောင့်ရသည်\n\n"
@@ -187,6 +195,19 @@ def _back_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="⬅️ ပင်မစာမျက်နှာ", callback_data="cb_back")],
     ])
+
+
+def _add_miniapp_btn(kb: InlineKeyboardMarkup) -> InlineKeyboardMarkup:
+    """Append a 'Download via Mini App' button to any existing keyboard."""
+    if not _MINI_APP_URL:
+        return kb
+    rows = list(kb.inline_keyboard) + [[
+        InlineKeyboardButton(
+            text="📱 Mini App မှ Device ထဲ ဒေါင်းနိုင်သည်",
+            web_app=WebAppInfo(url=_MINI_APP_URL),
+        )
+    ]]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def _main_reply_kb() -> ReplyKeyboardMarkup:
@@ -609,6 +630,76 @@ async def quota_handler(message: types.Message):
         f"🔄 Reset: <b>{h}h {m}m</b> ကျန်သည်",
         parse_mode="HTML",
     )
+
+
+@dp.message(Command("top"))
+async def top_handler(message: types.Message):
+    uid = message.from_user.id
+    if db.is_banned(uid):
+        return
+    rows = db.get_leaderboard(10)
+    if not rows:
+        return await message.reply("📭 မှတ်တမ်း မရှိသေးပါ")
+    medals = ["🥇","🥈","🥉","4️⃣","5️⃣","6️⃣","7️⃣","8️⃣","9️⃣","🔟"]
+    lines  = []
+    for i, row in enumerate(rows):
+        cnt   = row["success"] or 0
+        fname = (row["first_name"] or f"User …{str(row['user_id'])[-4:]}")[:22]
+        medal = medals[i] if i < len(medals) else f"{i+1}."
+        tag   = "  ◀ You" if row["user_id"] == uid else ""
+        lines.append(f"{medal} {fname} — {cnt} ပုဒ်{tag}")
+    await message.answer(
+        "🏆 <b>Top Downloaders</b>\n"
+        "━━━━━━━━━━━━━━━━\n\n" + "\n".join(lines),
+        parse_mode="HTML",
+    )
+
+
+@dp.message(Command("feedback"))
+async def feedback_cmd(message: types.Message, state: FSMContext):
+    uid = message.from_user.id
+    if db.is_banned(uid):
+        return
+    await message.reply(
+        "💬 <b>Feedback ပေးပို့ရန်</b>\n"
+        "━━━━━━━━━━━━━━━━\n"
+        "ပြဿနာ · အကြံပြုချက် · မေးမြန်းချင်သည်များ ရေးပါ\n\n"
+        "<i>/cancel — မပေးပို့ဘဲ ဖျက်နိုင်သည်</i>",
+        parse_mode="HTML",
+    )
+    await state.set_state(FeedbackFlow.waiting)
+
+
+@dp.message(FeedbackFlow.waiting, F.text)
+async def feedback_receive(message: types.Message, state: FSMContext):
+    uid   = message.from_user.id
+    fname = message.from_user.full_name or str(uid)
+    uname = message.from_user.username or ""
+    text  = (message.text or "").strip()
+    if not text:
+        return await message.reply("⚠️ စာသားရေးပြီးမှ ပေးပို့ပါ")
+    await state.clear()
+    try:
+        await bot.send_message(
+            ADMIN_ID,
+            f"💬 <b>User Feedback</b>\n"
+            f"From: {fname}" + (f" (@{uname})" if uname else "") + "\n"
+            f"ID: <code>{uid}</code>\n"
+            "━━━━━━━━━━━━━━━━\n"
+            f"{text[:2000]}",
+            parse_mode="HTML",
+        )
+    except Exception:
+        pass
+    await message.reply("✅ Feedback ပေးပို့ပြီးပါပြီ။ ကျေးဇူးတင်ပါသည်！")
+
+
+@dp.message(Command("cancel"))
+async def cancel_handler(message: types.Message, state: FSMContext):
+    current = await state.get_state()
+    if current:
+        await state.clear()
+        await message.reply("❌ ဖျက်ပြီးပါပြီ")
 
 
 @dp.message(F.text == "📊 Analytics (စစ်ဆေးရန်)")
@@ -1665,7 +1756,7 @@ async def tiktok_handler(message: types.Message):
                 f"⚠️ <b>ဖိုင်ကြီးသဖြင့် ({round(video_size_mb, 2)} MB) Direct Link ပေးလိုက်ပါသည်</b>\n\n"
                 f"🔗 <a href=\"{video_url}\">ဗီဒီယို ဒေါင်းရန် နှိပ်ပါ</a>\n\n"
                 f"<i>Browser မှ ဖွင့်ပြီး Save လုပ်နိုင်သည်</i>",
-                parse_mode="HTML", reply_markup=kb
+                parse_mode="HTML", reply_markup=_add_miniapp_btn(kb)
             )
             return
 
@@ -1694,7 +1785,7 @@ async def tiktok_handler(message: types.Message):
             await wait.edit_text(
                 f"⚠️ <b>Telegram သို့ တိုက်ရိုက် ပို့မရပါ</b>\n\n"
                 f"🔗 <a href=\"{video_url}\">ဗီဒီယို ဒေါင်းရန် နှိပ်ပါ</a>",
-                parse_mode="HTML", reply_markup=kb
+                parse_mode="HTML", reply_markup=_add_miniapp_btn(kb)
             )
         finally:
             downloader.cleanup_file(temp_path)
@@ -2805,7 +2896,7 @@ async def cb_yt_resolution(call: types.CallbackQuery):
                 "⚠️ <i>CDN link သည် ယာယီဖြစ်သဖြင့် မကြာမီ expire ဖြစ်မည်</i>\n"
                 "📱 Browser / Download Manager ဖြင့် Save လုပ်နိုင်သည်",
                 parse_mode="HTML",
-                reply_markup=lower_kb,
+                reply_markup=_add_miniapp_btn(lower_kb),
                 disable_web_page_preview=True,
             )
         else:
@@ -2813,7 +2904,7 @@ async def cb_yt_resolution(call: types.CallbackQuery):
                 f"⚠️ <b>ဖိုင် ~ {est_mb:.0f} MB ကြီး — Telegram 50 MB limit ကျော်</b>\n\n"
                 "CDN link ရယူမရပါ။ Resolution နိမ့်ချ၍ ထပ်ကြိုးစားနိုင်သည်",
                 parse_mode="HTML",
-                reply_markup=lower_kb,
+                reply_markup=_add_miniapp_btn(lower_kb),
             )
         return
 
@@ -2877,7 +2968,7 @@ async def cb_yt_resolution(call: types.CallbackQuery):
                     "⚠️ <i>Link သည် CDN မှ ယာယီဖြစ်သဖြင့် အချိန်နည်းနည်းအတွင်း expire ဖြစ်မည်</i>\n"
                     "📱 Browser သို့မဟုတ် Download Manager ဖြင့် ဒေါင်းနိုင်သည်",
                     parse_mode="HTML",
-                    reply_markup=lower_kb,
+                    reply_markup=_add_miniapp_btn(lower_kb),
                     disable_web_page_preview=True,
                 )
             else:
@@ -2886,7 +2977,7 @@ async def cb_yt_resolution(call: types.CallbackQuery):
                     "CDN link ရယူမရပါ။\n"
                     "Resolution နိမ့်ချ၍ ထပ်ကြိုးစားနိုင်သည်",
                     parse_mode="HTML",
-                    reply_markup=lower_kb,
+                    reply_markup=_add_miniapp_btn(lower_kb),
                 )
             return
 
@@ -3410,6 +3501,8 @@ async def _run_webhook(domain: str):
     # ── Mini App: init module + register routes ───────────────────────────────
     _me = await bot.get_me()
     miniapp.init(bot, API_TOKEN, domain, bot_username=_me.username or "")
+    global _MINI_APP_URL
+    _MINI_APP_URL = f"https://{domain}/app"
 
     app = web.Application()
     app.router.add_get("/", _handle_root)
@@ -3441,8 +3534,10 @@ async def _run_webhook(domain: str):
             BotCommand(command="help",      description="အသုံးပြုနည်း / ဒေါင်းနည်း"),
             BotCommand(command="myhistory", description="ကျွန်ုပ်၏ ဒေါင်းမှတ်တမ်း (နောက်ဆုံး ၁၀)"),
             BotCommand(command="quota",     description="ယနေ့ Download Quota စစ်ကြည့်မည်"),
+            BotCommand(command="top",       description="🏆 Top Downloaders Leaderboard"),
+            BotCommand(command="feedback",  description="💬 Feedback / အကြံပြုချက် ပေးပို့မည်"),
         ])
-        log.info("[Bot] Commands menu registered (4 commands)")
+        log.info("[Bot] Commands menu registered (6 commands)")
     except Exception as _e:
         log.warning(f"[Bot] set_my_commands failed: {_e}")
 

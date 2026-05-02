@@ -450,6 +450,40 @@ def get_download_history(limit=2000):
         return []
 
 
+def get_leaderboard(limit: int = 10) -> list:
+    """Return top users by successful download count, joined with first_name."""
+    try:
+        with _connect() as conn:
+            return conn.execute(
+                """SELECT d.user_id,
+                          SUM(CASE WHEN d.status='success' THEN 1 ELSE 0 END) AS success,
+                          u.first_name
+                   FROM downloads d
+                   LEFT JOIN users u ON u.user_id = d.user_id
+                   GROUP BY d.user_id
+                   ORDER BY success DESC
+                   LIMIT ?""",
+                (limit,)
+            ).fetchall()
+    except Exception as e:
+        log.error(f"get_leaderboard failed: {e}")
+        return []
+
+
+def get_referral_count(user_id: int) -> int:
+    """Return number of users referred by this user."""
+    try:
+        with _connect() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM referrals WHERE referred_by = ?",
+                (int(user_id),)
+            ).fetchone()
+            return row[0] if row else 0
+    except Exception as e:
+        log.error(f"get_referral_count failed for {user_id}: {e}")
+        return 0
+
+
 def get_user_download_history(user_id: int, limit: int = 10) -> list:
     """Return last N download records for a specific user."""
     try:
