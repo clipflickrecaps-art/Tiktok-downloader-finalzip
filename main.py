@@ -5,6 +5,7 @@ from aiogram.types import (
     InlineKeyboardMarkup, InlineKeyboardButton,
     ReplyKeyboardMarkup, KeyboardButton,
     InputMediaPhoto, FSInputFile,
+    WebAppInfo, MenuButtonWebApp,
 )
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -23,6 +24,7 @@ import tasks as tk
 import broadcaster as bc
 import facebook_downloader as fb
 import youtube_downloader as yt
+import miniapp
 
 API_TOKEN  = os.environ['BOT_TOKEN']
 ADMIN_ID   = int(os.environ['ADMIN_ID'])
@@ -157,9 +159,9 @@ ROLE_HELP = (
 
 # ─── Inline keyboard builders ─────────────────────────────────────────────────
 
-def _start_kb() -> InlineKeyboardMarkup:
+def _start_kb(domain: str = "") -> InlineKeyboardMarkup:
     """Main menu — shown with /start and via Back button."""
-    return InlineKeyboardMarkup(inline_keyboard=[
+    rows = [
         [
             InlineKeyboardButton(text="📘 အသုံးပြုနည်း", callback_data="cb_howto"),
             InlineKeyboardButton(text="👤 ကျွန်ုပ်၏ Status", callback_data="cb_status"),
@@ -167,7 +169,15 @@ def _start_kb() -> InlineKeyboardMarkup:
         [
             InlineKeyboardButton(text="🎁 Invite / Referral", callback_data="cb_referral"),
         ],
-    ])
+    ]
+    if domain:
+        rows.append([
+            InlineKeyboardButton(
+                text="📱 Mini App ဖွင့်မည်",
+                web_app=WebAppInfo(url=f"https://{domain}/app"),
+            )
+        ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def _back_kb() -> InlineKeyboardMarkup:
@@ -178,18 +188,22 @@ def _back_kb() -> InlineKeyboardMarkup:
 
 
 def _main_reply_kb() -> ReplyKeyboardMarkup:
-    """Always-visible chat keyboard — row1: guide|status  row2: referral|home  row3: premium."""
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="📘 အသုံးပြုနည်း"),
-             KeyboardButton(text="👤 ကျွန်ုပ်၏ Status")],
-            [KeyboardButton(text="🎁 Invite / Referral"),
-             KeyboardButton(text="🏠 Main Menu")],
-            [KeyboardButton(text="⭐ Premium / VIP")],
-        ],
-        resize_keyboard=True,
-        is_persistent=True,
-    )
+    """Always-visible chat keyboard — row1: guide|status  row2: referral|home  row3: premium  row4: mini-app."""
+    rows = [
+        [KeyboardButton(text="📘 အသုံးပြုနည်း"),
+         KeyboardButton(text="👤 ကျွန်ုပ်၏ Status")],
+        [KeyboardButton(text="🎁 Invite / Referral"),
+         KeyboardButton(text="🏠 Main Menu")],
+        [KeyboardButton(text="⭐ Premium / VIP")],
+    ]
+    if _REPLIT_DOMAIN:
+        rows.append([
+            KeyboardButton(
+                text="📱 Video Downloader App",
+                web_app=WebAppInfo(url=f"https://{_REPLIT_DOMAIN}/app"),
+            )
+        ])
+    return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True, is_persistent=True)
 
 
 # ─── Shared page renderers (used by both text and inline-callback handlers) ───
@@ -3278,9 +3292,13 @@ async def _run_webhook(domain: str):
     async def _handle_health(request):
         return web.Response(text="OK")
 
+    # ── Mini App: init module + register routes ───────────────────────────────
+    miniapp.init(bot, API_TOKEN, domain)
+
     app = web.Application()
     app.router.add_get("/", _handle_root)
     app.router.add_get("/health", _handle_health)
+    miniapp.register_routes(app)
     SimpleRequestHandler(dispatcher=dp, bot=bot).register(app, path=webhook_path)
     setup_application(app, dp, bot=bot)
 
@@ -3288,6 +3306,18 @@ async def _run_webhook(domain: str):
     await runner.setup()
     await web.TCPSite(runner, host="0.0.0.0", port=8080).start()
     log.info("Webhook server listening on :8080")
+
+    # ── Set chat menu button to open the Mini App ─────────────────────────────
+    try:
+        await bot.set_chat_menu_button(
+            menu_button=MenuButtonWebApp(
+                text="📱 Open App",
+                web_app=WebAppInfo(url=f"https://{domain}/app"),
+            )
+        )
+        log.info(f"[MiniApp] menu button set → https://{domain}/app")
+    except Exception as _e:
+        log.warning(f"[MiniApp] could not set menu button: {_e}")
 
     try:
         await asyncio.Event().wait()   # run forever
