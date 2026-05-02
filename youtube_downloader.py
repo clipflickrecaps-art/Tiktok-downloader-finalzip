@@ -108,13 +108,32 @@ def extract_youtube_url(text: str) -> Optional[str]:
 
 # ─── yt-dlp option builders ───────────────────────────────────────────────────
 
-def _ydl_opts_info() -> dict:
+def _yt_bypass_opts() -> dict:
+    """Common yt-dlp options that bypass YouTube bot-detection (2025+)."""
     return {
+        "extractor_args": {
+            "youtube": {
+                "player_client": ["ios", "web"],
+            }
+        },
+        "http_headers": {
+            "User-Agent": (
+                "com.google.ios.youtube/19.29.1 "
+                "(iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X;)"
+            ),
+        },
+    }
+
+
+def _ydl_opts_info() -> dict:
+    opts = {
         "quiet":         True,
         "no_warnings":   True,
         "skip_download": True,
         "noplaylist":    True,
     }
+    opts.update(_yt_bypass_opts())
+    return opts
 
 
 def _ydl_opts_download(format_str: str, outtmpl: str) -> dict:
@@ -128,6 +147,7 @@ def _ydl_opts_download(format_str: str, outtmpl: str) -> dict:
     }
     if _FFMPEG:
         opts["ffmpeg_location"] = _FFMPEG
+    opts.update(_yt_bypass_opts())
     return opts
 
 
@@ -306,6 +326,7 @@ def get_direct_url_sync(url: str, height: int = 0) -> tuple:
         "format":        fmt,
         "skip_download": True,
     }
+    opts.update(_yt_bypass_opts())
 
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:

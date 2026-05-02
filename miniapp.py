@@ -461,7 +461,7 @@ tg.ready(); tg.expand();
 const initData = tg.initData || "";
 
 /* ── State ── */
-let platform = null, selH = 0, videoInfo = null;
+let platform = null, selH = 0, videoInfo = null, _ytInfoTimer = null;
 const inp = document.getElementById("url-input");
 
 /* ── Tab switching ── */
@@ -501,7 +501,8 @@ function onUrl() {
     tg.MainButton.show();
   } catch(e){}
   if (platform === "youtube") {
-    show("infobtn");
+    clearTimeout(_ytInfoTimer);
+    _ytInfoTimer = setTimeout(fetchInfo, 700);
   } else {
     showActions();
   }
@@ -602,22 +603,26 @@ function showActions() {
 /* ── Fetch YouTube info ── */
 async function fetchInfo() {
   const url = inp.value.trim();
+  if (!url || platform !== "youtube") return;
   const btn = document.getElementById("infobtn");
+  hide("infobtn");
+  setStatus("proc", '<span class="sp"></span>YouTube အချက်အလက် ရယူနေသည်…');
   btn.disabled = true; btn.textContent = "⏳ ရယူနေသည်…";
-  setStatus("proc", "ဗီဒီယို အချက်အလက် ရယူနေသည်…");
   try {
     const r = await post("/api/info", {url, init_data: initData});
     if (!r.ok) throw new Error(r.error);
     videoInfo = r;
     showPlatCard(r);
     setStatus("");
-    /* YouTube: actions appear only after format selected */
-    if (platform !== "youtube") showActions();
+    hide("infobtn");
   } catch (e) {
     setStatus("err", "❌ " + e.message);
+    btn.disabled = false; btn.textContent = "🔁 ထပ်ကြိုးစား";
+    show("infobtn");
   } finally {
-    btn.disabled = false; btn.textContent = "🔍 ဗီဒီယို အချက်အလက် ရယူမည်";
-    hide("infobtn");
+    if (btn.disabled) {
+      btn.disabled = false; btn.textContent = "🔁 ထပ်ကြိုးစား";
+    }
   }
 }
 
