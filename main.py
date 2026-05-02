@@ -2247,15 +2247,49 @@ async def btn_broadcast_deliveries(message: types.Message):
 
 # ─── YouTube video handler ───────────────────────────────────────────────────
 
-def _yt_resolution_kb(formats: list, has_thumb: bool) -> InlineKeyboardMarkup:
-    """Build resolution selection keyboard for YouTube."""
+def _yt_resolution_kb(
+    formats: list,
+    has_thumb: bool,
+    max_height: int = 0,
+) -> InlineKeyboardMarkup:
+    """Build resolution selection keyboard for YouTube.
+
+    Args:
+        formats:    List of YTFormat objects (sorted highest-first).
+        has_thumb:  Whether to show the thumbnail-only button.
+        max_height: When non-zero, only show formats with height < max_height
+                    (used for "try lower resolution" retry flow).
+    """
     rows = []
-    for fmt in formats[:6]:
+    shown = 0
+    for fmt in formats:
+        if max_height and fmt.height >= max_height:
+            continue
+        if shown >= 6:
+            break
+        shown += 1
+
+        # Build size hint string
+        if fmt.size_mb > 0:
+            if fmt.size_mb > yt.MAX_TG_SIZE_MB:
+                hint = f" (~{fmt.size_mb:.0f} MB ⚠️)"
+            else:
+                hint = f" (~{fmt.size_mb:.0f} MB)"
+        else:
+            hint = ""
+
         rows.append([InlineKeyboardButton(
-            text=f"📹 {fmt.label}",
+            text=f"📹 {fmt.label}{hint}",
             callback_data=f"yt_res_{fmt.height}",
         )])
-    if has_thumb:
+
+    if not rows:
+        rows.append([InlineKeyboardButton(
+            text="📹 Best Available",
+            callback_data="yt_res_0",
+        )])
+
+    if has_thumb and not max_height:
         rows.append([InlineKeyboardButton(
             text="🖼 Thumbnail သာ ဒေါင်းမယ်",
             callback_data="yt_thumb",
@@ -2442,13 +2476,53 @@ async def cb_yt_resolution(call: types.CallbackQuery):
             log.warning(
                 f"[YT] too large — user={uid} size={result.size_mb:.2f}MB"
             )
-            db.log_download(uid, url, "youtube_video", "failed", "too_large")
-            return await call.message.edit_text(
-                f"⚠️ <b>ဖိုင်ကြီးနေသဖြင့် ({result.size_mb:.2f} MB) "
-                "Telegram သို့ တိုက်ရိုက်ပို့မရပါ</b>\n\n"
-                "50 MB ကျော်သော ဗီဒီယိုများ Bot မှ ပို့မရပါ။",
-                parse_mode="HTML",
+            # Delete the oversized temp file immediately
+            if result.filepath:
+                downloader.cleanup_file(result.filepath)
+
+            # Restore pending so the lower-res callback can access info
+            _yt_pending[uid] = {"url": url, "info": info}
+
+            # Try to get a direct CDN URL without re-downloading
+            await call.message.edit_text(
+                f"⏳ CDN link ရယူနေသည်...", parse_mode="HTML"
             )
+            stream_url, _note = await yt.get_direct_url(url, height)
+
+            # Build lower-resolution retry keyboard (heights < chosen one)
+            has_lower = any(f.height < height for f in info.formats) if height else False
+            lower_rows = []
+            if has_lower:
+                lower_rows.append([InlineKeyboardButton(
+                    text="📉 Resolution နိမ့်ချပြီး ထပ်ဒေါင်းမည်",
+                    callback_data=f"yt_lower_{height}",
+                )])
+            lower_rows.append([InlineKeyboardButton(
+                text="❌ Cancel", callback_data="yt_cancel"
+            )])
+            lower_kb = InlineKeyboardMarkup(inline_keyboard=lower_rows)
+
+            db.log_download(uid, url, "youtube_video", "failed", "too_large")
+
+            if stream_url:
+                await call.message.edit_text(
+                    f"⚠️ <b>ဖိုင် {result.size_mb:.1f} MB ကြီး — Telegram 50 MB limit ကျော်</b>\n\n"
+                    f"🔗 <a href=\"{stream_url}\">ဒေါင်းလုပ်လုပ်ရန် ဤနေရာနှိပ်ပါ</a>\n\n"
+                    "⚠️ <i>Link သည် CDN မှ ယာယီဖြစ်သဖြင့် အချိန်နည်းနည်းအတွင်း expire ဖြစ်မည်</i>\n"
+                    "📱 Browser သို့မဟုတ် Download Manager ဖြင့် ဒေါင်းနိုင်သည်",
+                    parse_mode="HTML",
+                    reply_markup=lower_kb,
+                    disable_web_page_preview=True,
+                )
+            else:
+                await call.message.edit_text(
+                    f"⚠️ <b>ဖိုင် {result.size_mb:.1f} MB ကြီး — Telegram 50 MB limit ကျော်</b>\n\n"
+                    "CDN link ရယူမရပါ။\n"
+                    "Resolution နိမ့်ချ၍ ထပ်ကြိုးစားနိုင်သည်",
+                    parse_mode="HTML",
+                    reply_markup=lower_kb,
+                )
+            return
 
         quality_tag = f"\n🎬 {result.format_note}" if result.format_note else ""
         size_tag    = f"\n📦 {result.size_mb:.2f} MB"
@@ -2504,6 +2578,48 @@ async def cb_yt_resolution(call: types.CallbackQuery):
     finally:
         if result and result.ok and result.filepath:
             downloader.cleanup_file(result.filepath)
+
+
+@dp.callback_query(F.data.startswith("yt_lower_"))
+async def cb_yt_lower_res(call: types.CallbackQuery):
+    """Show a resolution picker limited to heights smaller than the one that failed."""
+    uid = call.from_user.id
+    await call.answer()
+
+    if db.is_banned(uid):
+        return await call.answer("⛔ You are banned.", show_alert=True)
+
+    pending = _yt_pending.get(uid)
+    if not pending:
+        return await call.message.edit_text(
+            "❌ Session ကုန်သွားပါပြီ။ YouTube link ကို ထပ်ပေးပို့ပါ။"
+        )
+
+    try:
+        failed_height = int(call.data.split("_")[2])
+    except (IndexError, ValueError):
+        failed_height = 9999
+
+    info = pending["info"]
+    has_thumb = bool(info.thumbnail)
+
+    # Show only resolutions smaller than the one that just failed
+    smaller = [f for f in info.formats if f.height < failed_height]
+    if not smaller:
+        _yt_pending.pop(uid, None)
+        return await call.message.edit_text(
+            "❌ ထပ်မံ resolution နိမ့်ချ၍မရပါ။ YouTube မှ တိုက်ရိုက် ဒေါင်းနိုင်သည်"
+        )
+
+    kb = _yt_resolution_kb(smaller, has_thumb, max_height=failed_height)
+    await call.message.edit_text(
+        f"📹 <b>{info.title[:60]}</b>\n\n"
+        f"⚠️ {failed_height}p သည် 50 MB ကျော်သဖြင့် ပေးမရပါ\n"
+        "Resolution နိမ့်ချ၍ ထပ်ဒေါင်းနိုင်သည်:",
+        parse_mode="HTML",
+        reply_markup=kb,
+    )
+    log.info(f"[YT] lower-res picker shown — user={uid} failed_height={failed_height}")
 
 
 @dp.callback_query(F.data == "yt_thumb")

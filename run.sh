@@ -2,6 +2,7 @@
 while true; do
     echo "$(date) — Starting bot..."
     python main.py
-    echo "$(date) — Bot stopped. Restarting in 5 seconds..."
-    sleep 5
+    EXIT_CODE=$?
+    echo "$(date) — Bot stopped (exit=$EXIT_CODE). Restarting in 15 seconds..."
+    sleep 15
 done

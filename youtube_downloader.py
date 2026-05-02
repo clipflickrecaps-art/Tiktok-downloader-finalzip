@@ -18,6 +18,13 @@ Quality modes
 FREE  — selected height, pre-merged mp4.  Sent as send_video.
 VIP   — selected height, best quality merge via FFmpeg.  Sent as document.
 
+50 MB handling
+──────────────
+When a downloaded file exceeds MAX_TG_SIZE_MB, the caller should:
+  1. Delete the local file (downloader.cleanup_file).
+  2. Call get_direct_url(url, height) to get a temporary CDN link.
+  3. Send the link to the user + offer a lower-resolution retry button.
+
 Public API
 ──────────
   is_youtube_url(text)                       → bool
@@ -25,6 +32,7 @@ Public API
   fetch_youtube_info(url)                    → YTVideoInfo  (async)
   download_youtube_video(url, uid, msg_id,
                          height)             → YTDownloadResult  (async)
+  get_direct_url(url, height)                → (str|None, str)  (async)
   download_thumbnail_from_url(thumb_url,
                               uid, msg_id)   → str | None  (async)
   YTVideoInfo, YTDownloadResult              — structured containers
@@ -61,6 +69,7 @@ class YTFormat:
     height: int
     label: str
     ext: str
+    size_mb: float = 0.0   # estimated from yt-dlp filesize / filesize_approx; 0 = unknown
 
 
 @dataclass
@@ -137,6 +146,7 @@ def _fetch_info_sync(url: str) -> YTVideoInfo:
 
     seen_heights: set = set()
     formats: list = []
+    duration = int(info.get("duration") or 0)
 
     for f in (info.get("formats") or []):
         height = f.get("height")
@@ -145,10 +155,19 @@ def _fetch_info_sync(url: str) -> YTVideoInfo:
         if height in seen_heights:
             continue
         seen_heights.add(height)
+
+        # Estimate file size from yt-dlp metadata (may be 0 if unknown)
+        size_bytes = f.get("filesize") or f.get("filesize_approx") or 0
+        # If this is a video-only format, add rough audio track size
+        if size_bytes and f.get("acodec", "none") == "none" and duration:
+            size_bytes += duration * 16000   # ~128 kbps audio
+        size_mb = round(size_bytes / (1024 * 1024), 1) if size_bytes else 0.0
+
         formats.append(YTFormat(
             height=height,
             label=f"{height}p",
             ext=f.get("ext", "mp4"),
+            size_mb=size_mb,
         ))
 
     formats.sort(key=lambda x: x.height, reverse=True)
@@ -250,6 +269,58 @@ async def download_youtube_video(
         format_note=note,
         resolution=note,
     )
+
+
+# ─── Direct CDN URL (no download) ────────────────────────────────────────────
+
+def get_direct_url_sync(url: str, height: int = 0) -> tuple:
+    """Extract a direct CDN stream URL for the video without downloading.
+
+    Uses a pre-merged (single-file) format so there is one URL the user can
+    open in a browser or download manager.  YouTube CDN URLs expire after a
+    few hours.
+
+    Returns (stream_url: str | None, note: str).
+    On success  → (url, format_note e.g. "720p").
+    On failure  → (None, error_message).
+    """
+    if height:
+        fmt = (
+            f"best[height<={height}][ext=mp4]"
+            f"/best[height<={height}]"
+            "/best[ext=mp4]/best"
+        )
+    else:
+        fmt = "best[ext=mp4]/best"
+
+    opts = {
+        "quiet":         True,
+        "no_warnings":   True,
+        "noplaylist":    True,
+        "format":        fmt,
+        "skip_download": True,
+    }
+
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+        if not info:
+            return None, "No info returned"
+        stream_url = info.get("url")
+        if stream_url:
+            note = f"{info.get('height', '')}p" if info.get("height") else "best"
+            log.info(f"[YT] direct URL extracted ({note}): {stream_url[:80]}…")
+            return stream_url, note
+        return None, "No direct URL in yt-dlp response"
+    except Exception as e:
+        log.error(f"[YT] get_direct_url_sync error: {e}")
+        return None, str(e)
+
+
+async def get_direct_url(url: str, height: int = 0) -> tuple:
+    """Async wrapper for get_direct_url_sync."""
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, get_direct_url_sync, url, height)
 
 
 # ─── Thumbnail download ───────────────────────────────────────────────────────
