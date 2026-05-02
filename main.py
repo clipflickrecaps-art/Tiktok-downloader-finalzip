@@ -986,10 +986,40 @@ async def listpay_handler(message: types.Message):
 # ─── /ytcookies — upload YouTube cookies.txt (owner only) ────────────────────
 
 @dp.message(Command("ytcookies"))
-async def ytcookies_cmd_handler(message: types.Message, state: FSMContext):
+async def ytcookies_cmd_handler(message: types.Message, state: FSMContext, command: CommandObject):
     uid = message.from_user.id
     if not roles.is_owner(uid):
         return await message.reply(roles.OWNER_ONLY)
+
+    arg = (command.args or "").strip().lower()
+
+    if arg == "status":
+        if not os.path.isfile(yt.YT_COOKIES_FILE):
+            return await message.reply(
+                "🍪 <b>YouTube Cookies Status</b>\n\n"
+                "❌ yt_cookies.txt မရှိသေး\n\n"
+                "/ytcookies ဖြင့် cookies file upload လုပ်ပါ။",
+                parse_mode="HTML",
+            )
+        stat = os.stat(yt.YT_COOKIES_FILE)
+        size_kb = round(stat.st_size / 1024, 1)
+        import datetime
+        mtime = datetime.datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S")
+        with open(yt.YT_COOKIES_FILE, "r", encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+        cookie_lines = sum(1 for l in lines if l.strip() and not l.startswith("#"))
+        has_yt = any(".youtube.com" in l for l in lines)
+        valid_mark = "✅" if has_yt else "⚠️"
+        return await message.reply(
+            f"🍪 <b>YouTube Cookies Status</b>\n\n"
+            f"📁 File: <code>yt_cookies.txt</code>\n"
+            f"📅 Last updated: <code>{mtime}</code>\n"
+            f"📏 Size: <code>{size_kb} KB</code>\n"
+            f"🔢 Cookie entries: <code>{cookie_lines}</code>\n"
+            f"{valid_mark} YouTube domain: {'ပါသည်' if has_yt else 'မပါ — invalid ဖြစ်နိုင်'}\n\n"
+            f"Update လုပ်လိုလျှင် <code>/ytcookies</code> ဖြင့် ဖိုင်ပြန် upload လုပ်ပါ။",
+            parse_mode="HTML",
+        )
 
     cookie_status = "✅ ရှိပြီး" if os.path.isfile(yt.YT_COOKIES_FILE) else "❌ မရှိသေး"
     await message.reply(
@@ -997,7 +1027,8 @@ async def ytcookies_cmd_handler(message: types.Message, state: FSMContext):
         f"လက်ရှိ cookies file: {cookie_status}\n\n"
         f"YouTube cookies.txt ဖိုင်ကို document အဖြစ် ပေးပို့ပါ။\n"
         f"(Browser extension: <i>Get cookies.txt LOCALLY</i> သုံး၍ youtube.com cookies export လုပ်ပါ)\n\n"
-        f"⚠️ Netscape format ဖိုင်သာ အသုံးပြုနိုင်သည်။",
+        f"⚠️ Netscape format ဖိုင်သာ အသုံးပြုနိုင်သည်။\n\n"
+        f"Status ကြည့်ရန်: <code>/ytcookies status</code>",
         parse_mode="HTML",
     )
     await state.set_state(YTCookiesFlow.waiting_file)
