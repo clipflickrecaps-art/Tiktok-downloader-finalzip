@@ -276,17 +276,23 @@ async def download_youtube_video(
 def get_direct_url_sync(url: str, height: int = 0) -> tuple:
     """Extract a direct CDN stream URL for the video without downloading.
 
-    Uses a pre-merged (single-file) format so there is one URL the user can
-    open in a browser or download manager.  YouTube CDN URLs expire after a
-    few hours.
+    Strategy
+    ────────
+    1. Try exact height as a pre-merged MP4 (single-file, browser-openable).
+    2. Fall back through progressively looser format strings.
+    3. If info.url is empty, walk the formats list for any URL.
+
+    YouTube CDN URLs are signed and expire after a few hours.
 
     Returns (stream_url: str | None, note: str).
     On success  → (url, format_note e.g. "720p").
     On failure  → (None, error_message).
     """
+    # Build format preference chain: exact height → any height → best
     if height:
         fmt = (
-            f"best[height<={height}][ext=mp4]"
+            f"best[height={height}][ext=mp4]"
+            f"/best[height<={height}][ext=mp4]"
             f"/best[height<={height}]"
             "/best[ext=mp4]/best"
         )
@@ -306,11 +312,32 @@ def get_direct_url_sync(url: str, height: int = 0) -> tuple:
             info = ydl.extract_info(url, download=False)
         if not info:
             return None, "No info returned"
+
+        # Top-level url = pre-merged stream (ideal)
         stream_url = info.get("url")
         if stream_url:
-            note = f"{info.get('height', '')}p" if info.get("height") else "best"
+            h = info.get("height") or height or 0
+            note = f"{h}p" if h else "best"
             log.info(f"[YT] direct URL extracted ({note}): {stream_url[:80]}…")
             return stream_url, note
+
+        # Fall back: walk formats list, pick highest-quality with a URL
+        formats = info.get("formats") or []
+        # Sort by height descending so we pick best available ≤ requested height
+        candidates = sorted(
+            [f for f in formats if f.get("url") and (
+                not height or (f.get("height") or 0) <= height
+            )],
+            key=lambda f: (f.get("height") or 0),
+            reverse=True,
+        )
+        if candidates:
+            best = candidates[0]
+            h = best.get("height") or 0
+            note = f"{h}p" if h else best.get("format_id", "best")
+            log.info(f"[YT] direct URL from formats ({note}): {best['url'][:80]}…")
+            return best["url"], note
+
         return None, "No direct URL in yt-dlp response"
     except Exception as e:
         log.error(f"[YT] get_direct_url_sync error: {e}")

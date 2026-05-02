@@ -2632,6 +2632,62 @@ async def cb_yt_resolution(call: types.CallbackQuery):
                 "⚠️ YouTube daily limit ပြည့်သွားပါပြီ။ မနက်ဖြန် ထပ်ကြိုးစားပါ။"
             )
 
+    # ── Pre-check: if estimated size > 50 MB skip download → direct link ────
+    chosen_fmt = next(
+        (f for f in info.formats if f.height == height), None
+    ) if height else None
+    est_mb = chosen_fmt.size_mb if chosen_fmt else 0.0
+
+    if est_mb > yt.MAX_TG_SIZE_MB:
+        log.info(
+            f"[YT] pre-check skip download — user={uid} "
+            f"height={height} est={est_mb:.0f}MB"
+        )
+        _yt_pending.pop(uid, None)
+        cd.set_cooldown(uid)
+        await call.message.edit_text(
+            f"⏳ {height}p CDN link ရယူနေသည်... ခဏစောင့်ပါ",
+            parse_mode="HTML",
+        )
+        stream_url, note = await yt.get_direct_url(url, height)
+
+        has_lower = any(f.height < height for f in info.formats)
+        lower_rows = []
+        if has_lower:
+            lower_rows.append([InlineKeyboardButton(
+                text="📉 Resolution နိမ့်ချပြီး ဒေါင်းမည် (50 MB အောက်)",
+                callback_data=f"yt_lower_{height}",
+            )])
+            _yt_pending[uid] = {"url": url, "info": info}
+        lower_rows.append([InlineKeyboardButton(
+            text="❌ Cancel", callback_data="yt_cancel"
+        )])
+        lower_kb = InlineKeyboardMarkup(inline_keyboard=lower_rows)
+
+        db.log_download(uid, url, "youtube_video", "success", "direct_link")
+        _trigger_referral_validation(uid)
+        db.increment_yt_daily(uid)
+        st.increment_usage(uid)
+
+        if stream_url:
+            await call.message.edit_text(
+                f"📦 <b>ခန့်မှန်းဖိုင်ဆိုဒ် ~ {est_mb:.0f} MB</b> — Telegram 50 MB limit ကျော်\n\n"
+                f"🔗 <a href=\"{stream_url}\">ဒေါင်းလုပ်လုပ်ရန် ဤနေရာနှိပ်ပါ</a>\n\n"
+                "⚠️ <i>CDN link သည် ယာယီဖြစ်သဖြင့် မကြာမီ expire ဖြစ်မည်</i>\n"
+                "📱 Browser / Download Manager ဖြင့် Save လုပ်နိုင်သည်",
+                parse_mode="HTML",
+                reply_markup=lower_kb,
+                disable_web_page_preview=True,
+            )
+        else:
+            await call.message.edit_text(
+                f"⚠️ <b>ဖိုင် ~ {est_mb:.0f} MB ကြီး — Telegram 50 MB limit ကျော်</b>\n\n"
+                "CDN link ရယူမရပါ။ Resolution နိမ့်ချ၍ ထပ်ကြိုးစားနိုင်သည်",
+                parse_mode="HTML",
+                reply_markup=lower_kb,
+            )
+        return
+
     _yt_pending.pop(uid, None)
     cd.set_cooldown(uid)
 
