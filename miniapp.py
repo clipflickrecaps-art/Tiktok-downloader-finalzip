@@ -1,20 +1,31 @@
-"""miniapp.py — Telegram Mini App backend.
+"""miniapp.py — Telegram Mini App — Full-featured Video Downloader
+
+Tabs
+────
+  ⬇️ Download   — TikTok / Facebook / YouTube (video · audio · thumbnail)
+  📋 History    — User's last 20 downloads
+  👤 Profile    — Quota · Premium status · Stats
 
 Routes
 ──────
-GET  /app          → serve the Mini App HTML UI
-POST /api/info     → fetch video info (title, formats)
-POST /api/dl       → start background download, send result to user's chat
+  GET  /app              → Mini App HTML
+  POST /api/info         → Video info (title, formats)
+  POST /api/dl           → Start download (type: video | audio | thumb)
+  POST /api/history      → User download history
+  POST /api/profile      → User profile / quota / premium
 """
 
 import asyncio
+import glob as _glob
 import hashlib
 import hmac
 import json
 import os
+import shutil
 import time
 import urllib.parse
 
+import yt_dlp
 from aiohttp import web
 from aiogram.types import FSInputFile
 
@@ -22,88 +33,101 @@ import database as db
 import downloader
 import facebook_downloader as fb
 import youtube_downloader as yt
+import referral as ref
+import settings as st
 from logger import log
 
-# ─── Module state (populated by init() before routes are registered) ──────────
+# ─── Module state ─────────────────────────────────────────────────────────────
 
-_bot        = None
-_bot_token  = ""
-_domain     = ""
-
-MINIAPP_MAX_CONCURRENT = 3          # cap simultaneous mini-app downloads
-_semaphore: asyncio.Semaphore | None = None
+_bot       = None
+_bot_token = ""
+_domain    = ""
+_ffmpeg    = shutil.which("ffmpeg") or ""
+_sem: asyncio.Semaphore | None = None
 
 
 def init(bot, bot_token: str, domain: str) -> None:
-    global _bot, _bot_token, _domain, _semaphore
+    global _bot, _bot_token, _domain, _sem
     _bot       = bot
     _bot_token = bot_token
     _domain    = domain
-    _semaphore = asyncio.Semaphore(MINIAPP_MAX_CONCURRENT)
-    log.info(f"[MiniApp] initialised — app URL: https://{domain}/app")
+    _sem       = asyncio.Semaphore(4)
+    log.info(f"[MiniApp] initialised — https://{domain}/app")
 
 
 def register_routes(app: web.Application) -> None:
-    app.router.add_get ("/app",       handle_app)
-    app.router.add_post("/api/info",  handle_api_info)
-    app.router.add_post("/api/dl",    handle_api_dl)
-    log.info("[MiniApp] routes registered: /app  /api/info  /api/dl")
+    app.router.add_get ("/app",          handle_app)
+    app.router.add_post("/api/info",     handle_api_info)
+    app.router.add_post("/api/dl",       handle_api_dl)
+    app.router.add_post("/api/history",  handle_api_history)
+    app.router.add_post("/api/profile",  handle_api_profile)
+    log.info("[MiniApp] routes: /app /api/info /api/dl /api/history /api/profile")
 
 
-# ─── Telegram initData validation ─────────────────────────────────────────────
+# ─── initData validation ──────────────────────────────────────────────────────
 
-def _parse_init_data(init_data: str) -> dict | None:
-    """Validate Telegram WebApp initData via HMAC-SHA256.
-
-    Returns the parsed user dict on success, None on failure.
-    Empty initData is rejected so the API cannot be called from a browser.
-    """
-    if not init_data or not _bot_token:
+def _parse_init_data(raw: str) -> dict | None:
+    if not raw or not _bot_token:
         return None
     try:
         params: dict[str, str] = {}
-        for item in init_data.split("&"):
+        for item in raw.split("&"):
             if "=" in item:
                 k, v = item.split("=", 1)
                 params[k] = urllib.parse.unquote_plus(v)
-
-        received_hash = params.pop("hash", None)
-        if not received_hash:
+        got = params.pop("hash", None)
+        if not got:
             return None
-
-        check_string = "\n".join(f"{k}={v}" for k, v in sorted(params.items()))
-        secret_key   = hmac.new(b"WebAppData", _bot_token.encode(), hashlib.sha256).digest()
-        computed     = hmac.new(secret_key, check_string.encode(), hashlib.sha256).hexdigest()
-
-        if not hmac.compare_digest(computed, received_hash):
-            log.warning("[MiniApp] initData HMAC mismatch")
+        check = "\n".join(f"{k}={v}" for k, v in sorted(params.items()))
+        key   = hmac.new(b"WebAppData", _bot_token.encode(), hashlib.sha256).digest()
+        want  = hmac.new(key, check.encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(want, got):
             return None
-
-        user = json.loads(params.get("user", "{}"))
-        return user
-
-    except Exception as exc:
-        log.warning(f"[MiniApp] initData parse error: {exc}")
+        return json.loads(params.get("user", "{}"))
+    except Exception as e:
+        log.warning(f"[MiniApp] initData error: {e}")
         return None
 
 
-# ─── JSON helpers ──────────────────────────────────────────────────────────────
+# ─── Helpers ──────────────────────────────────────────────────────────────────
 
-def _ok(**kw):
-    return web.json_response({"ok": True, **kw})
+def _ok(**kw):  return web.json_response({"ok": True,  **kw})
+def _err(m, s=400): return web.json_response({"ok": False, "error": m}, status=s)
 
-def _err(msg: str, status: int = 400):
-    return web.json_response({"ok": False, "error": msg}, status=status)
-
-def _cors(response: web.Response) -> web.Response:
-    response.headers["Access-Control-Allow-Origin"] = "*"
-    return response
+def _c(r):
+    r.headers["Access-Control-Allow-Origin"] = "*"
+    return r
 
 
-# ─── /app — serve Mini App HTML ───────────────────────────────────────────────
+def _user_history(uid: int, limit: int = 20) -> list[dict]:
+    try:
+        from database import _connect
+        with _connect() as conn:
+            rows = conn.execute(
+                """SELECT media_type, status, created_at
+                   FROM downloads WHERE user_id = ?
+                   ORDER BY created_at DESC LIMIT ?""",
+                (uid, limit),
+            ).fetchall()
+        out = []
+        icons = {"video": "📹", "audio": "🎵", "youtube_video": "🎬",
+                 "facebook_video": "📘", "direct_link": "🔗"}
+        for r in rows:
+            mtype  = r["media_type"] or "video"
+            status = r["status"] or ""
+            ts     = (r["created_at"] or "")[:16].replace("T", " ")
+            ok     = status == "success" or "direct" in status
+            out.append({"icon": icons.get(mtype, "📥"), "type": mtype,
+                        "status": "✅" if ok else "❌", "time": ts})
+        return out
+    except Exception as e:
+        log.warning(f"[MiniApp] history error: {e}")
+        return []
 
-_HTML = """\
-<!DOCTYPE html>
+
+# ─── HTML ─────────────────────────────────────────────────────────────────────
+
+_HTML = r"""<!DOCTYPE html>
 <html lang="my">
 <head>
 <meta charset="UTF-8">
@@ -113,253 +137,490 @@ _HTML = """\
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root{
-  --bg:#0d1117;--card:#161b22;--border:#30363d;
-  --text:#e6edf3;--sub:#8b949e;
-  --blue:#58a6ff;--green:#3fb950;--red:#f85149;--yellow:#f0883e;
+  --bg:#0d1117;--card:#161b22;--card2:#1c2128;--border:#30363d;
+  --text:#e6edf3;--sub:#8b949e;--dim:#484f58;
+  --blue:#58a6ff;--green:#3fb950;--red:#f85149;--yellow:#f0883e;--purple:#bc8cff;
   --tiktok:#fe2c55;--fb:#1877f2;--yt:#ff0000;
 }
+html,body{height:100%;overflow:hidden}
 body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(--text);
-  min-height:100vh;padding:16px 16px 32px;max-width:520px;margin:0 auto}
-h1{font-size:1.15rem;font-weight:700;text-align:center;margin-bottom:3px}
-.sub{color:var(--sub);font-size:.78rem;text-align:center;margin-bottom:20px}
+  display:flex;flex-direction:column;height:100%}
 
-/* URL input */
-.input-row{display:flex;gap:8px;margin-bottom:10px}
+/* ── panels ── */
+#panels{flex:1;overflow-y:auto;padding:16px 16px 0}
+.panel{display:none}
+.panel.active{display:block}
+
+/* ── tab bar ── */
+.tabbar{display:flex;background:var(--card);border-top:1px solid var(--border);
+  flex-shrink:0;padding-bottom:env(safe-area-inset-bottom,0)}
+.tb{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  padding:10px 4px 8px;border:none;background:none;color:var(--sub);font-size:.72rem;
+  cursor:pointer;gap:3px;transition:color .15s}
+.tb .ico{font-size:1.2rem}
+.tb.on{color:var(--blue)}
+
+/* ── headings ── */
+h1{font-size:1.1rem;font-weight:700;text-align:center;margin-bottom:2px}
+.sub{color:var(--sub);font-size:.76rem;text-align:center;margin-bottom:18px}
+h2{font-size:.9rem;font-weight:600;color:var(--sub);margin:16px 0 8px;
+  text-transform:uppercase;letter-spacing:.5px}
+
+/* ── url input ── */
+.url-row{display:flex;gap:8px;margin-bottom:9px}
 #url-input{flex:1;background:var(--card);border:1.5px solid var(--border);border-radius:10px;
-  padding:12px 14px;color:var(--text);font-size:.95rem;outline:none;transition:border-color .2s;
-  min-width:0}
+  padding:12px 14px;color:var(--text);font-size:.95rem;outline:none;
+  transition:border-color .2s;min-width:0}
 #url-input:focus{border-color:var(--blue)}
-#url-input::placeholder{color:var(--sub)}
-#clear-btn{background:var(--card);border:1.5px solid var(--border);border-radius:10px;
-  padding:0 14px;color:var(--sub);font-size:1rem;cursor:pointer;display:none;white-space:nowrap}
-#paste-btn{width:100%;background:var(--card);border:1.5px solid var(--border);border-radius:10px;
-  padding:11px;color:var(--blue);font-size:.88rem;cursor:pointer;margin-bottom:16px;
-  transition:background .15s}
-#paste-btn:active{background:#1c2a3d}
+#url-input::placeholder{color:var(--dim)}
+#clr{background:var(--card);border:1.5px solid var(--border);border-radius:10px;
+  padding:0 13px;color:var(--sub);font-size:1rem;cursor:pointer;display:none}
+#paste{width:100%;background:var(--card);border:1.5px solid var(--border);border-radius:10px;
+  padding:10px;color:var(--blue);font-size:.88rem;cursor:pointer;margin-bottom:14px}
+#paste:active{background:#1c2a3d}
 
-/* Info card */
-#info-card{background:var(--card);border:1.5px solid var(--border);border-radius:12px;
-  padding:14px;margin-bottom:14px;display:none}
-.plat-badge{display:inline-flex;align-items:center;gap:5px;border-radius:20px;
-  padding:3px 12px;font-size:.76rem;font-weight:600;margin-bottom:10px}
-.b-tiktok{background:#2a0a10;color:var(--tiktok);border:1px solid var(--tiktok)}
+/* ── platform card ── */
+#pcard{background:var(--card);border:1.5px solid var(--border);border-radius:12px;
+  padding:14px;margin-bottom:12px;display:none}
+.pbadge{display:inline-flex;align-items:center;gap:5px;border-radius:20px;
+  padding:3px 12px;font-size:.75rem;font-weight:600;margin-bottom:9px}
+.b-tt{background:#2a0a10;color:var(--tiktok);border:1px solid var(--tiktok)}
 .b-fb{background:#0a1529;color:var(--fb);border:1px solid var(--fb)}
 .b-yt{background:#2a0a0a;color:var(--yt);border:1px solid var(--yt)}
-#vtitle{font-size:.88rem;font-weight:500;
+#vtitle{font-size:.86rem;font-weight:500;line-height:1.4;
   display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-#fmt-section{display:none;margin-top:12px}
-.fmt-lbl{font-size:.73rem;color:var(--sub);margin-bottom:7px}
-.fmt-grid{display:flex;flex-wrap:wrap;gap:8px}
-.fmt-btn{background:#21262d;border:1.5px solid var(--border);border-radius:8px;
-  padding:7px 14px;color:var(--text);font-size:.82rem;cursor:pointer;transition:border-color .15s}
-.fmt-btn.sel,.fmt-btn:active{border-color:var(--blue);background:#1c2a3d;color:var(--blue)}
-.warn{color:var(--yellow)!important;font-size:.7rem}
+/* format picker */
+#fmts{display:none;margin-top:12px}
+.fl{font-size:.72rem;color:var(--sub);margin-bottom:6px}
+.fg{display:flex;flex-wrap:wrap;gap:7px}
+.fb{background:#21262d;border:1.5px solid var(--border);border-radius:8px;
+  padding:7px 13px;color:var(--text);font-size:.82rem;cursor:pointer;line-height:1.3}
+.fb.sel,.fb:active{border-color:var(--blue);background:#1c2a3d;color:var(--blue)}
+.warn{color:var(--yellow);font-size:.68rem}
 
-/* Buttons */
-#info-btn,#dl-btn{width:100%;border-radius:12px;padding:14px;font-size:.95rem;
-  font-weight:600;cursor:pointer;margin-bottom:12px;transition:opacity .15s;display:none}
-#info-btn{background:var(--card);border:1.5px solid var(--blue);color:var(--blue)}
-#info-btn:active{background:#1c2a3d}
-#info-btn:disabled{opacity:.5;cursor:not-allowed}
-#dl-btn{background:linear-gradient(135deg,#238636,#2ea043);border:none;color:#fff}
-#dl-btn:not(:disabled):active{opacity:.85}
-#dl-btn:disabled{opacity:.5;cursor:not-allowed}
+/* ── action grid ── */
+#acts{display:none;gap:10px;margin-bottom:12px}
+#acts.show{display:grid}
+#acts.cols2{grid-template-columns:1fr 1fr}
+#acts.cols3{grid-template-columns:1fr 1fr 1fr}
+.act{border:none;border-radius:11px;padding:13px 8px;font-size:.88rem;font-weight:600;
+  cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:4px;
+  transition:opacity .15s}
+.act:disabled{opacity:.45;cursor:not-allowed}
+.act:not(:disabled):active{opacity:.8}
+.act .aico{font-size:1.3rem}
+.act-v{background:linear-gradient(135deg,#238636,#2ea043);color:#fff}
+.act-a{background:linear-gradient(135deg,#7c3aed,#9d5cf6);color:#fff}
+.act-t{background:linear-gradient(135deg,#0e6aa8,#1a85cf);color:#fff}
 
-/* Status */
-#status{text-align:center;font-size:.86rem;padding:12px;border-radius:10px;
-  display:none;line-height:1.5}
-.s-proc{background:#111d2d;color:var(--blue)}
+/* ── info-only button (YouTube) ── */
+#infobtn{width:100%;background:var(--card);border:1.5px solid var(--blue);border-radius:12px;
+  padding:13px;color:var(--blue);font-size:.92rem;font-weight:600;cursor:pointer;
+  margin-bottom:12px;display:none;transition:background .15s}
+#infobtn:active{background:#1c2a3d}
+#infobtn:disabled{opacity:.5;cursor:not-allowed}
+
+/* ── link card ── */
+#lcard{display:none;background:var(--card);border:1.5px solid var(--border);
+  border-radius:12px;padding:14px;margin-bottom:12px;text-align:center}
+#lcard a{color:var(--blue);font-size:.9rem;font-weight:600;word-break:break-all}
+.lnote{color:var(--sub);font-size:.72rem;margin-top:6px;line-height:1.4}
+
+/* ── status bar ── */
+#status{font-size:.86rem;padding:11px 14px;border-radius:10px;display:none;
+  margin-bottom:12px;line-height:1.5;text-align:center}
+.s-proc{background:#0d1f35;color:var(--blue)}
 .s-ok  {background:#0d2318;color:var(--green)}
 .s-err {background:#2a0d0d;color:var(--red)}
-.s-link{background:#1a1a2e;color:var(--blue)}
-.sp{display:inline-block;width:13px;height:13px;border:2px solid rgba(88,166,255,.3);
-  border-top-color:var(--blue);border-radius:50%;animation:spin .7s linear infinite;
-  vertical-align:middle;margin-right:5px}
+.sp{display:inline-block;width:13px;height:13px;
+  border:2px solid rgba(88,166,255,.25);border-top-color:var(--blue);
+  border-radius:50%;animation:spin .7s linear infinite;vertical-align:middle;margin-right:5px}
 @keyframes spin{to{transform:rotate(360deg)}}
 
-/* direct-link card */
-#link-card{display:none;background:var(--card);border:1.5px solid var(--border);
-  border-radius:12px;padding:14px;margin-bottom:12px;text-align:center}
-#link-card a{color:var(--blue);font-size:.9rem;font-weight:600;word-break:break-all}
-#link-card .link-note{color:var(--sub);font-size:.74rem;margin-top:6px}
+/* ── history tab ── */
+.hlist{display:flex;flex-direction:column;gap:8px;padding-bottom:16px}
+.hitem{display:flex;align-items:center;gap:11px;background:var(--card);
+  border:1px solid var(--border);border-radius:10px;padding:10px 12px}
+.hico{font-size:1.3rem;flex-shrink:0}
+.hinfo{flex:1;min-width:0}
+.htype{font-size:.82rem;font-weight:600}
+.htime{font-size:.72rem;color:var(--sub);margin-top:2px}
+.hst{font-size:.9rem;flex-shrink:0}
+.empty{text-align:center;color:var(--sub);font-size:.88rem;padding:32px 0}
+
+/* ── profile tab ── */
+.pcard{background:var(--card);border:1px solid var(--border);border-radius:12px;
+  padding:16px;margin-bottom:12px}
+.prow{display:flex;justify-content:space-between;align-items:center;
+  padding:8px 0;border-bottom:1px solid var(--border)}
+.prow:last-child{border-bottom:none}
+.plbl{font-size:.82rem;color:var(--sub)}
+.pval{font-size:.88rem;font-weight:600}
+.avatar{width:56px;height:56px;border-radius:50%;background:linear-gradient(135deg,var(--blue),var(--purple));
+  display:flex;align-items:center;justify-content:center;font-size:1.5rem;
+  margin:0 auto 12px;border:2px solid var(--border)}
+.uname{text-align:center;font-size:1rem;font-weight:700;margin-bottom:3px}
+.urole{text-align:center;font-size:.76rem;color:var(--sub);margin-bottom:16px}
+.bar-bg{background:#21262d;border-radius:6px;height:8px;overflow:hidden;margin-top:6px}
+.bar-fill{height:100%;border-radius:6px;background:linear-gradient(90deg,var(--blue),var(--green));
+  transition:width .4s}
+.premium-badge{display:inline-flex;align-items:center;gap:5px;
+  background:#1a1a2e;color:var(--purple);border:1px solid var(--purple);
+  border-radius:20px;padding:3px 12px;font-size:.76rem;font-weight:600}
+.free-badge{color:var(--sub);font-size:.8rem}
+.loading{text-align:center;color:var(--sub);padding:32px 0;font-size:.88rem}
 </style>
 </head>
 <body>
-<h1>🎬 Video Downloader</h1>
-<p class="sub">TikTok &nbsp;·&nbsp; Facebook &nbsp;·&nbsp; YouTube</p>
 
-<div class="input-row">
-  <input id="url-input" type="url" placeholder="URL ကူးထည့်ပါ..." autocomplete="off"/>
-  <button id="clear-btn" onclick="clearUrl()">✕</button>
-</div>
-<button id="paste-btn" onclick="pasteUrl()">📋 Clipboard မှ URL ကူးထည့်ရန်</button>
+<div id="panels">
 
-<div id="info-card">
-  <div id="plat-badge" class="plat-badge"></div>
-  <div id="vtitle"></div>
-  <div id="fmt-section">
-    <div class="fmt-lbl">📹 Resolution ရွေးပါ:</div>
-    <div class="fmt-grid" id="fmt-grid"></div>
+  <!-- ── Download Tab ────────────────────────────────────────────── -->
+  <div id="tab-dl" class="panel active">
+    <h1>🎬 Video Downloader</h1>
+    <p class="sub">TikTok &nbsp;·&nbsp; Facebook &nbsp;·&nbsp; YouTube</p>
+
+    <div class="url-row">
+      <input id="url-input" type="url" placeholder="URL ကူးထည့်ပါ…" autocomplete="off"/>
+      <button id="clr" onclick="clearUrl()">✕</button>
+    </div>
+    <button id="paste" onclick="pasteUrl()">📋 Clipboard မှ URL ကူးထည့်ရန်</button>
+
+    <div id="pcard">
+      <div id="pbadge" class="pbadge"></div>
+      <div id="vtitle"></div>
+      <div id="fmts">
+        <div class="fl">📹 Resolution ရွေးပါ:</div>
+        <div class="fg" id="fg"></div>
+      </div>
+    </div>
+
+    <button id="infobtn" onclick="fetchInfo()">🔍 ဗီဒီယို အချက်အလက် ရယူမည်</button>
+
+    <div id="acts">
+      <button id="btn-v" class="act act-v" onclick="doDownload('video')">
+        <span class="aico">📹</span>Video
+      </button>
+      <button id="btn-a" class="act act-a" onclick="doDownload('audio')" style="display:none">
+        <span class="aico">🎵</span>Audio
+      </button>
+      <button id="btn-t" class="act act-t" onclick="doDownload('thumb')" style="display:none">
+        <span class="aico">🖼</span>Thumbnail
+      </button>
+    </div>
+
+    <div id="lcard">
+      <div id="lanchor"></div>
+      <div class="lnote">⚠️ CDN link ယာယီဖြစ်သဖြင့် မကြာမီ expire ဖြစ်မည်<br>Browser / Download Manager ဖြင့် Save လုပ်ပါ</div>
+    </div>
+
+    <div id="status"></div>
   </div>
+
+  <!-- ── History Tab ─────────────────────────────────────────────── -->
+  <div id="tab-hist" class="panel">
+    <h1>📋 Download History</h1>
+    <p class="sub">ဒေါင်းခဲ့သော မှတ်တမ်းများ</p>
+    <div id="hlist" class="hlist"><div class="loading">⏳ ခဏစောင့်ပါ…</div></div>
+  </div>
+
+  <!-- ── Profile Tab ─────────────────────────────────────────────── -->
+  <div id="tab-profile" class="panel">
+    <h1>👤 ကျွန်ုပ်၏ Profile</h1>
+    <p class="sub">Status · Quota · Premium</p>
+    <div id="profile-content"><div class="loading">⏳ ခဏစောင့်ပါ…</div></div>
+  </div>
+
 </div>
 
-<button id="info-btn" onclick="fetchInfo()">🔍 ဗီဒီယို အချက်အလက် ရယူမည်</button>
-<button id="dl-btn"   onclick="startDl()">⬇️ Download &amp; Chat ထဲပို့မည်</button>
-
-<div id="link-card">
-  <div id="link-anchor"></div>
-  <div class="link-note">⚠️ Link သည် ယာယီဖြစ်သဖြင့် မကြာမီ expire ဖြစ်မည်<br>Browser / Download Manager ဖြင့် Save လုပ်ပါ</div>
-</div>
-
-<div id="status"></div>
+<!-- ── Tab Bar ──────────────────────────────────────────────────── -->
+<nav class="tabbar">
+  <button class="tb on" id="tb-dl"      onclick="switchTab('dl')">
+    <span class="ico">⬇️</span><span>Download</span>
+  </button>
+  <button class="tb"    id="tb-hist"    onclick="switchTab('hist')">
+    <span class="ico">📋</span><span>History</span>
+  </button>
+  <button class="tb"    id="tb-profile" onclick="switchTab('profile')">
+    <span class="ico">👤</span><span>Profile</span>
+  </button>
+</nav>
 
 <script>
+/* ── Telegram WebApp bootstrap ── */
 const tg = window.Telegram.WebApp;
 tg.ready(); tg.expand();
-
-const inp    = document.getElementById("url-input");
-const clrBtn = document.getElementById("clear-btn");
-let platform = null, selectedH = 0, videoInfo = null;
 const initData = tg.initData || "";
 
-inp.addEventListener("input", onUrlChange);
+/* ── State ── */
+let platform = null, selH = 0, videoInfo = null;
+const inp = document.getElementById("url-input");
 
-function onUrlChange(){
-  const v = inp.value.trim();
-  clrBtn.style.display = v ? "block" : "none";
-  hide("info-card"); hide("link-card");
-  setStatus(""); hide("dl-btn"); hide("info-btn");
-  videoInfo = null; selectedH = 0;
-  if(!v){ return; }
-  platform = detect(v);
-  if(platform==="tiktok"||platform==="facebook"){ show("dl-btn"); }
-  else if(platform==="youtube"){ show("info-btn"); }
+/* ── Tab switching ── */
+let curTab = "dl";
+function switchTab(t) {
+  document.querySelectorAll(".panel").forEach(p => p.classList.remove("active"));
+  document.querySelectorAll(".tb").forEach(b => b.classList.remove("on"));
+  document.getElementById("tab-"+t).classList.add("active");
+  document.getElementById("tb-"+t).classList.add("on");
+  curTab = t;
+  if (t === "hist")    loadHistory();
+  if (t === "profile") loadProfile();
 }
 
-function detect(u){
-  if(/tiktok\\.com|vm\\.tiktok/i.test(u)) return "tiktok";
-  if(/facebook\\.com|fb\\.watch/i.test(u)) return "facebook";
-  if(/youtube\\.com|youtu\\.be/i.test(u)) return "youtube";
+/* ── URL input handling ── */
+inp.addEventListener("input", onUrl);
+function onUrl() {
+  const v = inp.value.trim();
+  document.getElementById("clr").style.display = v ? "block" : "none";
+  hide("pcard"); hide("acts"); hide("lcard"); hide("infobtn");
+  setStatus(""); videoInfo = null; selH = 0;
+  if (!v) return;
+  platform = detect(v);
+  if (!platform) return;
+  if (platform === "youtube") {
+    show("infobtn");
+  } else {
+    showActions();
+  }
+}
+
+function detect(u) {
+  if (/tiktok\.com|vm\.tiktok|vt\.tiktok/i.test(u)) return "tiktok";
+  if (/facebook\.com|fb\.watch/i.test(u))            return "facebook";
+  if (/youtube\.com|youtu\.be/i.test(u))             return "youtube";
   return null;
 }
 
-function clearUrl(){ inp.value=""; onUrlChange(); inp.focus(); }
+function clearUrl() { inp.value = ""; onUrl(); inp.focus(); }
 
-async function pasteUrl(){
-  try{
+async function pasteUrl() {
+  try {
     const t = await navigator.clipboard.readText();
-    if(t){ inp.value=t; onUrlChange(); }
-  } catch{ inp.focus(); }
+    if (t) { inp.value = t; onUrl(); }
+  } catch { inp.focus(); }
 }
 
-async function fetchInfo(){
-  const url = inp.value.trim();
-  if(!url) return;
-  document.getElementById("info-btn").disabled = true;
-  document.getElementById("info-btn").textContent = "⏳ ရယူနေသည်...";
-  setStatus("proc","ဗီဒီယို အချက်အလက် ရယူနေသည်...");
-  hide("link-card");
-  try{
-    const r = await post("/api/info",{url,init_data:initData});
-    if(!r.ok) throw new Error(r.error||"ရယူမရပါ");
-    videoInfo = r;
-    showInfoCard(r);
-    setStatus("");
-  } catch(e){
-    setStatus("err","❌ "+e.message);
-  } finally{
-    document.getElementById("info-btn").disabled=false;
-    document.getElementById("info-btn").textContent="🔍 ဗီဒီယို အချက်အလက် ရယူမည်";
-  }
-}
-
-function showInfoCard(d){
-  const labels={tiktok:["b-tiktok","🎵 TikTok"],facebook:["b-fb","📘 Facebook"],youtube:["b-yt","▶️ YouTube"]};
-  const [cls,txt]=labels[d.platform]||["",""];
-  const badge=document.getElementById("plat-badge");
-  badge.className="plat-badge "+(cls||"");
-  badge.textContent=txt;
-  document.getElementById("vtitle").textContent=d.title||"";
-  const fs=document.getElementById("fmt-section");
-  const fg=document.getElementById("fmt-grid");
-  if(d.formats&&d.formats.length){
-    fg.innerHTML="";
-    d.formats.forEach(f=>{
-      const btn=document.createElement("button");
-      btn.className="fmt-btn";
-      const big=f.size_mb>50;
-      const sz=f.size_mb>0?" (~"+Math.round(f.size_mb)+" MB"+(big?" ⚠️":"")+")" : "";
-      btn.innerHTML=f.label+sz+(big?"<br><span class='warn'>CDN link ပေးမည်</span>":"");
-      btn.dataset.h=f.height;
-      btn.onclick=()=>{
-        document.querySelectorAll(".fmt-btn").forEach(b=>b.classList.remove("sel"));
-        btn.classList.add("sel"); selectedH=f.height; show("dl-btn");
+/* ── Show platform info card ── */
+function showPlatCard(d) {
+  const cfg = {
+    tiktok:   ["b-tt", "🎵 TikTok"],
+    facebook: ["b-fb", "📘 Facebook"],
+    youtube:  ["b-yt", "▶️ YouTube"],
+  };
+  const [cls, lbl] = cfg[d.platform] || ["", ""];
+  const badge = document.getElementById("pbadge");
+  badge.className = "pbadge " + cls;
+  badge.textContent = lbl;
+  document.getElementById("vtitle").textContent = d.title || "";
+  const fmts = document.getElementById("fmts");
+  const fg   = document.getElementById("fg");
+  if (d.formats && d.formats.length) {
+    fg.innerHTML = "";
+    d.formats.forEach(f => {
+      const btn = document.createElement("button");
+      btn.className = "fb";
+      const big = f.size_mb > 50;
+      const sz  = f.size_mb > 0 ? " (~" + Math.round(f.size_mb) + " MB" + (big ? " ⚠️" : "") + ")" : "";
+      btn.innerHTML = f.label + sz + (big ? "<br><span class='warn'>CDN link ပေးမည်</span>" : "");
+      btn.dataset.h = f.height;
+      btn.onclick = () => {
+        document.querySelectorAll(".fb").forEach(b => b.classList.remove("sel"));
+        btn.classList.add("sel"); selH = f.height; showActions();
       };
       fg.appendChild(btn);
     });
-    fs.style.display="block";
-    hide("dl-btn");
+    fmts.style.display = "block";
   } else {
-    fs.style.display="none";
-    show("dl-btn");
+    fmts.style.display = "none";
   }
-  show("info-card");
-  hide("info-btn");
+  show("pcard");
 }
 
-async function startDl(){
-  const url=inp.value.trim();
-  if(!url) return;
-  const dlBtn=document.getElementById("dl-btn");
-  dlBtn.disabled=true;
-  hide("link-card");
-  setStatus("proc",'<span class="sp"></span>ဒေါင်းနေသည်… Telegram chat ထဲ ပေးပို့မည်');
-  try{
-    const r=await post("/api/dl",{url,platform,height:selectedH,init_data:initData});
-    if(!r.ok) throw new Error(r.error||"Download မအောင်မြင်ပါ");
-    if(r.link){
-      showLinkCard(r.link);
-      setStatus("ok","✅ CDN link ရရှိပြီ — ဒေါင်းရန် အောက်ပါ link နှိပ်ပါ");
+/* ── Show action buttons based on platform ── */
+function showActions() {
+  const acts  = document.getElementById("acts");
+  const btnV  = document.getElementById("btn-v");
+  const btnA  = document.getElementById("btn-a");
+  const btnT  = document.getElementById("btn-t");
+
+  btnA.style.display = "none";
+  btnT.style.display = "none";
+
+  if (platform === "tiktok") {
+    btnA.style.display = "";
+    acts.className = "act show cols2";
+  } else if (platform === "youtube") {
+    btnA.style.display = "";
+    btnT.style.display = "";
+    acts.className = "act show cols3";
+  } else {
+    acts.className = "act show cols2";
+    /* Facebook: video only row — make it full width */
+    acts.className = "act show cols2";
+    btnV.style.gridColumn = "";
+  }
+  show("acts");
+}
+
+/* ── Fetch YouTube info ── */
+async function fetchInfo() {
+  const url = inp.value.trim();
+  const btn = document.getElementById("infobtn");
+  btn.disabled = true; btn.textContent = "⏳ ရယူနေသည်…";
+  setStatus("proc", "ဗီဒီယို အချက်အလက် ရယူနေသည်…");
+  try {
+    const r = await post("/api/info", {url, init_data: initData});
+    if (!r.ok) throw new Error(r.error);
+    videoInfo = r;
+    showPlatCard(r);
+    setStatus("");
+    /* YouTube: actions appear only after format selected */
+    if (platform !== "youtube") showActions();
+  } catch (e) {
+    setStatus("err", "❌ " + e.message);
+  } finally {
+    btn.disabled = false; btn.textContent = "🔍 ဗီဒီယို အချက်အလက် ရယူမည်";
+    hide("infobtn");
+  }
+}
+
+/* ── Start download ── */
+async function doDownload(type) {
+  const url = inp.value.trim();
+  if (!url) return;
+  const btnId = {video:"btn-v", audio:"btn-a", thumb:"btn-t"}[type];
+  const btn   = document.getElementById(btnId);
+  btn.disabled = true;
+  hide("lcard");
+  setStatus("proc", '<span class="sp"></span>ဒေါင်းနေသည်… Telegram chat ထဲ ပေးပို့မည်');
+  try {
+    const r = await post("/api/dl", {url, platform, height: selH, type, init_data: initData});
+    if (!r.ok) throw new Error(r.error);
+    if (r.link) {
+      document.getElementById("lanchor").innerHTML =
+        '<a href="' + r.link + '" target="_blank">⬇️ ဒေါင်းရန် ဤနေရာနှိပ်ပါ</a>';
+      show("lcard");
+      setStatus("ok", "✅ CDN link ရရှိပြီ — Browser ဖြင့် Save လုပ်ပါ");
     } else {
-      setStatus("ok","✅ "+(r.message||"Chat ထဲ ပေးပို့ပြီးပါပြီ！"));
+      setStatus("ok", "✅ " + (r.message || "Telegram chat ထဲ ပေးပို့ပြီးပါပြီ！"));
     }
-  } catch(e){
-    setStatus("err","❌ "+e.message);
-  } finally{
-    dlBtn.disabled=false;
+  } catch (e) {
+    setStatus("err", "❌ " + e.message);
+  } finally {
+    btn.disabled = false;
   }
 }
 
-function showLinkCard(link){
-  const c=document.getElementById("link-card");
-  document.getElementById("link-anchor").innerHTML='<a href="'+link+'" target="_blank">⬇️ ဒေါင်းရန် နှိပ်ပါ</a>';
-  c.style.display="block";
+/* ── History ── */
+let histLoaded = false;
+async function loadHistory() {
+  if (histLoaded) return;
+  const el = document.getElementById("hlist");
+  el.innerHTML = '<div class="loading">⏳ ခဏစောင့်ပါ…</div>';
+  try {
+    const r = await post("/api/history", {init_data: initData});
+    if (!r.ok) throw new Error(r.error);
+    if (!r.items.length) {
+      el.innerHTML = '<div class="empty">📭 ဒေါင်းမှတ်တမ်း မရှိသေးပါ</div>';
+    } else {
+      el.innerHTML = r.items.map(i =>
+        `<div class="hitem">
+          <span class="hico">${i.icon}</span>
+          <div class="hinfo">
+            <div class="htype">${fmtType(i.type)}</div>
+            <div class="htime">${i.time}</div>
+          </div>
+          <span class="hst">${i.status}</span>
+        </div>`
+      ).join("");
+    }
+    histLoaded = true;
+  } catch (e) {
+    el.innerHTML = '<div class="empty">❌ ဒေါင်းမှတ်တမ်း ရယူမရပါ</div>';
+  }
 }
 
-async function post(path,body){
-  const r=await fetch(path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+function fmtType(t) {
+  const m = {video:"📹 TikTok Video", audio:"🎵 TikTok Audio",
+    youtube_video:"🎬 YouTube Video", facebook_video:"📘 Facebook Video",
+    direct_link:"🔗 Direct Link", "":"📥 Download"};
+  return m[t] || (t || "Download");
+}
+
+/* ── Profile ── */
+let profLoaded = false;
+async function loadProfile() {
+  if (profLoaded) return;
+  const el = document.getElementById("profile-content");
+  el.innerHTML = '<div class="loading">⏳ ခဏစောင့်ပါ…</div>';
+  try {
+    const r = await post("/api/profile", {init_data: initData});
+    if (!r.ok) throw new Error(r.error);
+    const p = r.profile;
+    const pct = p.limit > 0 ? Math.min(100, Math.round(p.used / p.limit * 100)) : 0;
+    const premBadge = p.is_premium
+      ? `<span class="premium-badge">💎 ${p.plan || "Premium"}</span>`
+      : `<span class="free-badge">Free User</span>`;
+    el.innerHTML = `
+      <div class="pcard">
+        <div class="avatar">👤</div>
+        <div class="uname">${esc(p.name || "User")}</div>
+        <div class="urole">${premBadge}</div>
+        <div class="prow"><span class="plbl">User ID</span><span class="pval">${p.uid}</span></div>
+        <div class="prow"><span class="plbl">ဒေါင်းပြီးသော စုစုပေါင်း</span><span class="pval">${p.total_dl} ခု</span></div>
+        ${p.joined ? `<div class="prow"><span class="plbl">စတင်သည့်နေ့</span><span class="pval">${p.joined}</span></div>` : ""}
+      </div>
+      ${p.monetization ? `
+      <div class="pcard">
+        <div class="prow">
+          <span class="plbl">ယနေ့ ဒေါင်းမှု</span>
+          <span class="pval">${p.used} / ${p.limit > 0 ? p.limit : "∞"}</span>
+        </div>
+        ${p.limit > 0 ? `<div class="bar-bg"><div class="bar-fill" style="width:${pct}%"></div></div>` : ""}
+        <div class="prow"><span class="plbl">YouTube ယနေ့</span><span class="pval">${p.yt_used} ပုဒ်</span></div>
+      </div>` : ""}
+      ${p.is_premium && p.expiry ? `
+      <div class="pcard">
+        <div class="prow"><span class="plbl">Premium ကုန်ဆုံးသည့်နေ့</span>
+          <span class="pval" style="color:var(--purple)">${p.expiry}</span></div>
+      </div>` : ""}
+    `;
+    profLoaded = true;
+  } catch (e) {
+    el.innerHTML = '<div class="empty">❌ Profile ရယူမရပါ</div>';
+  }
+}
+
+/* ── Utilities ── */
+async function post(path, body) {
+  const r = await fetch(path, {method:"POST",
+    headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)});
   return r.json();
 }
 
-function setStatus(type,msg){
-  const el=document.getElementById("status");
-  if(!type||!msg){el.style.display="none";el.className="";return;}
-  el.className=type==="proc"?"s-proc":type==="ok"?"s-ok":type==="link"?"s-link":"s-err";
-  el.innerHTML=msg; el.style.display="block";
+function setStatus(type, msg) {
+  const el = document.getElementById("status");
+  if (!type || !msg) { el.style.display = "none"; el.className = ""; return; }
+  el.className = "s-" + type;
+  el.innerHTML = msg;
+  el.style.display = "block";
 }
-function show(id){document.getElementById(id).style.display="";}
-function hide(id){document.getElementById(id).style.display="none";}
+
+function show(id) { document.getElementById(id).style.display = ""; }
+function hide(id) { document.getElementById(id).style.display = "none"; }
+function esc(s)   { return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
 </script>
 </body>
 </html>
 """
 
 
+# ─── Route handlers ───────────────────────────────────────────────────────────
+
 async def handle_app(request: web.Request) -> web.Response:
-    return _cors(web.Response(text=_HTML, content_type="text/html"))
+    return _c(web.Response(text=_HTML, content_type="text/html"))
 
-
-# ─── /api/info ────────────────────────────────────────────────────────────────
 
 async def handle_api_info(request: web.Request) -> web.Response:
     try:
@@ -367,21 +628,19 @@ async def handle_api_info(request: web.Request) -> web.Response:
     except Exception:
         return _err("Invalid JSON")
 
-    url       = (body.get("url") or "").strip()
-    init_data = body.get("init_data", "")
-
-    user = _parse_init_data(init_data)
+    user = _parse_init_data(body.get("init_data", ""))
     if user is None:
-        return _err("Telegram auth failed — please open from the bot", 401)
+        return _err("Telegram auth failed", 401)
 
+    url = (body.get("url") or "").strip()
     if not url:
         return _err("URL required")
 
     if yt.is_youtube_url(url):
         info = await yt.fetch_youtube_info(url)
         if not info.ok:
-            return _err("YouTube info ရယူမရပါ — " + (info.error_msg or "Unknown error"))
-        return _cors(_ok(
+            return _err("YouTube info ရယူမရပါ — " + (info.error_msg or ""))
+        return _c(_ok(
             platform="youtube",
             title=info.title,
             formats=[{"height": f.height, "label": f.label, "size_mb": f.size_mb}
@@ -389,15 +648,13 @@ async def handle_api_info(request: web.Request) -> web.Response:
         ))
 
     if fb.is_facebook_url(url):
-        return _cors(_ok(platform="facebook", title="Facebook Video", formats=[]))
+        return _c(_ok(platform="facebook", title="Facebook Video", formats=[]))
 
     if downloader.TIKTOK_PATTERN.search(url):
-        return _cors(_ok(platform="tiktok", title="TikTok Video", formats=[]))
+        return _c(_ok(platform="tiktok", title="TikTok Video", formats=[]))
 
-    return _err("ပံ့ပိုးထားသော URL မဟုတ်ပါ (TikTok / Facebook / YouTube)")
+    return _err("TikTok / Facebook / YouTube URL မဟုတ်ပါ")
 
-
-# ─── /api/dl ──────────────────────────────────────────────────────────────────
 
 async def handle_api_dl(request: web.Request) -> web.Response:
     try:
@@ -405,215 +662,272 @@ async def handle_api_dl(request: web.Request) -> web.Response:
     except Exception:
         return _err("Invalid JSON")
 
-    url       = (body.get("url") or "").strip()
-    platform  = (body.get("platform") or "").strip()
-    height    = int(body.get("height") or 0)
-    init_data = body.get("init_data", "")
-
-    user = _parse_init_data(init_data)
+    user = _parse_init_data(body.get("init_data", ""))
     if user is None:
-        return _err("Telegram auth failed — please open from the bot", 401)
+        return _err("Telegram auth failed", 401)
 
-    uid = user.get("id")
+    uid      = user.get("id")
+    url      = (body.get("url") or "").strip()
+    platform = (body.get("platform") or "").strip()
+    height   = int(body.get("height") or 0)
+    dl_type  = (body.get("type") or "video").strip()   # video | audio | thumb
+
     if not uid:
-        return _err("User ID missing in initData", 401)
-
+        return _err("User ID missing", 401)
     if db.is_banned(uid):
-        return _err("⛔ သင်သည် Bot ကို အသုံးပြုခွင့် ပိတ်ထားသည်")
-
+        return _err("⛔ Bot အသုံးပြုခွင့် ပိတ်ထားသည်")
     if not url:
         return _err("URL required")
 
-    # Auto-detect platform if not provided
+    # Auto-detect platform
     if not platform:
-        if yt.is_youtube_url(url):
-            platform = "youtube"
-        elif fb.is_facebook_url(url):
-            platform = "facebook"
-        elif downloader.TIKTOK_PATTERN.search(url):
-            platform = "tiktok"
-        else:
-            return _err("ပံ့ပိုးထားသော URL မဟုတ်ပါ")
+        if yt.is_youtube_url(url):         platform = "youtube"
+        elif fb.is_facebook_url(url):      platform = "facebook"
+        elif downloader.TIKTOK_PATTERN.search(url): platform = "tiktok"
+        else: return _err("URL ပံ့ပိုးမထားပါ")
 
-    # For YouTube large-file pre-check: return CDN link immediately
-    if platform == "youtube" and height:
-        # find the format's estimated size
-        pass  # handled inside _do_download_yt — always async
-
-    # Fire and forget
-    asyncio.create_task(_do_download(uid, url, platform, height))
-    return _cors(_ok(message="ဒေါင်းနေသည်… Telegram chat ထဲ မကြာမီ ပေးပို့မည်"))
+    asyncio.create_task(_dispatch(uid, url, platform, height, dl_type))
+    return _c(_ok(message="ဒေါင်းနေသည်… Telegram chat ထဲ မကြာမီ ပေးပို့မည်"))
 
 
-# ─── Background download dispatcher ──────────────────────────────────────────
+async def handle_api_history(request: web.Request) -> web.Response:
+    try:
+        body = await request.json()
+    except Exception:
+        return _err("Invalid JSON")
 
-async def _do_download(uid: int, url: str, platform: str, height: int) -> None:
-    assert _semaphore is not None
-    async with _semaphore:
+    user = _parse_init_data(body.get("init_data", ""))
+    if user is None:
+        return _err("Telegram auth failed", 401)
+
+    uid = user.get("id")
+    if not uid:
+        return _err("User ID missing", 401)
+
+    items = await asyncio.get_event_loop().run_in_executor(None, _user_history, uid)
+    return _c(_ok(items=items))
+
+
+async def handle_api_profile(request: web.Request) -> web.Response:
+    try:
+        body = await request.json()
+    except Exception:
+        return _err("Invalid JSON")
+
+    user = _parse_init_data(body.get("init_data", ""))
+    if user is None:
+        return _err("Telegram auth failed", 401)
+
+    uid = user.get("id")
+    if not uid:
+        return _err("User ID missing", 401)
+
+    def _build():
+        row       = db.get_user(uid)
+        total_dl  = db.get_user_download_count(uid)
+        is_prem   = ref.is_premium(uid)
+        expiry    = None
+        plan      = None
+        monet     = st.get_flag("monetization_enabled")
+        used = limit = yt_used = 0
+
+        if is_prem:
+            ps     = st.get_premium_status(uid)
+            expiry = (ps.get("expiry_date") or "")[:10] if ps else None
+            plan   = ps.get("plan_name") if ps else None
+
+        if monet:
+            st.reset_usage_if_needed(uid)
+            usg    = st.get_user_usage(uid)
+            used   = usg.get("daily_used_count", 0)
+            limit  = st.get_daily_free_limit()
+            yt_used = db.get_yt_daily_count(uid)
+
+        name   = " ".join(filter(None, [
+            (row["first_name"] if row else None),
+            user.get("first_name"), user.get("last_name"),
+        ])) or "User"
+        joined = (row["joined_at"][:10] if row and row.get("joined_at") else None)
+
+        return {
+            "uid": uid, "name": name, "joined": joined,
+            "total_dl": total_dl, "is_premium": is_prem,
+            "plan": plan, "expiry": expiry,
+            "monetization": bool(monet),
+            "used": used, "limit": limit if monet else 0, "yt_used": yt_used,
+        }
+
+    profile = await asyncio.get_event_loop().run_in_executor(None, _build)
+    return _c(_ok(profile=profile))
+
+
+# ─── Download dispatcher ──────────────────────────────────────────────────────
+
+async def _dispatch(uid: int, url: str, platform: str, height: int, dl_type: str):
+    assert _sem is not None
+    async with _sem:
         try:
             if platform == "tiktok":
-                await _dl_tiktok(uid, url)
+                if dl_type == "audio":
+                    await _dl_tiktok_audio(uid, url)
+                else:
+                    await _dl_tiktok(uid, url)
             elif platform == "facebook":
                 await _dl_facebook(uid, url)
             elif platform == "youtube":
-                await _dl_youtube(uid, url, height)
-            else:
-                await _bot.send_message(uid, "❌ ပံ့ပိုးထားသော Platform မဟုတ်ပါ")
+                if dl_type == "audio":
+                    await _dl_youtube_audio(uid, url)
+                elif dl_type == "thumb":
+                    await _dl_youtube_thumb(uid, url)
+                else:
+                    await _dl_youtube(uid, url, height)
         except Exception as exc:
-            log.error(f"[MiniApp] _do_download error uid={uid}: {exc}")
+            log.error(f"[MiniApp] dispatch error uid={uid}: {exc}")
             try:
-                await _bot.send_message(uid, f"❌ Download မအောင်မြင်ပါ — {exc}")
+                await _bot.send_message(uid, f"❌ ဒေါင်းမရပါ — {exc}")
             except Exception:
                 pass
 
 
-# ─── TikTok ───────────────────────────────────────────────────────────────────
+# ─── TikTok video ─────────────────────────────────────────────────────────────
 
-async def _dl_tiktok(uid: int, url: str) -> None:
-    notice = await _bot.send_message(uid, "⏳ TikTok ဒေါင်းနေသည်...")
+async def _dl_tiktok(uid: int, url: str):
+    notice = await _bot.send_message(uid, "⏳ TikTok video ဒေါင်းနေသည်…")
     try:
         data = await downloader.fetch_tiktok_data(url)
-        video_url    = data.get("play") or data.get("video", {}).get("play_addr", {}).get("url_list", [""])[0]
-        video_size_mb = (data.get("size") or 0) / (1024 * 1024)
-        title        = data.get("title", "TikTok Video")
+        vurl = data.get("play", "")
+        size_mb = (data.get("size") or 0) / (1024 * 1024)
+        title   = data.get("title", "TikTok Video")
 
-        if not video_url:
-            await notice.edit_text("❌ TikTok video URL ရှာမတွေ့ပါ")
-            return
+        if not vurl:
+            return await notice.edit_text("❌ TikTok video URL ရှာမတွေ့ပါ")
 
-        if video_size_mb > fb.MAX_TG_SIZE_MB:
-            await notice.edit_text(
-                f"⚠️ <b>ဖိုင် {video_size_mb:.1f} MB ကြီးသဖြင့် Direct Link ပေးပါသည်</b>\n\n"
-                f"🔗 <a href=\"{video_url}\">ဒေါင်းရန် နှိပ်ပါ</a>\n\n"
-                "<i>Browser / Download Manager ဖြင့် Save လုပ်ပါ</i>",
+        if size_mb > fb.MAX_TG_SIZE_MB:
+            return await notice.edit_text(
+                f"⚠️ <b>ဖိုင် {size_mb:.1f} MB ကြီး — Direct Link</b>\n\n"
+                f"🔗 <a href=\"{vurl}\">ဒေါင်းရန် နှိပ်ပါ</a>\n"
+                "<i>Browser ဖြင့် Save လုပ်ပါ</i>",
                 parse_mode="HTML",
             )
-            return
 
-        temp = os.path.join(downloader.TEMP_DIR, f"ma_tt_{uid}_{int(time.time())}.mp4")
+        tmp = os.path.join(downloader.TEMP_DIR, f"ma_tt_{uid}_{int(time.time())}.mp4")
         try:
-            await downloader.download_to_file(video_url, temp)
-            f = FSInputFile(temp, filename="tiktok.mp4")
-            await _bot.send_video(uid, video=f, caption=f"🔥 {title[:200]}")
+            await downloader.download_to_file(vurl, tmp)
+            await _bot.send_video(uid, video=FSInputFile(tmp, filename="tiktok.mp4"),
+                                  caption=f"🔥 {title[:200]}")
             await notice.delete()
         finally:
-            downloader.cleanup_file(temp)
+            downloader.cleanup_file(tmp)
 
     except Exception as exc:
-        log.error(f"[MiniApp] TikTok error uid={uid}: {exc}")
-        await notice.edit_text(f"❌ TikTok ဒေါင်းမရပါ — {exc}")
+        log.error(f"[MiniApp] tiktok video uid={uid}: {exc}")
+        await _safe_edit(notice, f"❌ TikTok ဒေါင်းမရပါ — {exc}")
 
 
-# ─── Facebook ─────────────────────────────────────────────────────────────────
+# ─── TikTok audio ─────────────────────────────────────────────────────────────
 
-async def _dl_facebook(uid: int, url: str) -> None:
-    notice = await _bot.send_message(uid, "⏳ Facebook video ဒေါင်းနေသည်...")
+async def _dl_tiktok_audio(uid: int, url: str):
+    notice = await _bot.send_message(uid, "⏳ TikTok audio ဒေါင်းနေသည်…")
+    try:
+        data  = await downloader.fetch_tiktok_data(url)
+        music = data.get("music", "")
+        title = data.get("title", "TikTok Audio")
+
+        if not music:
+            return await notice.edit_text("❌ Audio URL ရှာမတွေ့ပါ")
+
+        await _bot.send_audio(uid, audio=music,
+                              caption=f"🎵 {title[:200]}")
+        await notice.delete()
+
+    except Exception as exc:
+        log.error(f"[MiniApp] tiktok audio uid={uid}: {exc}")
+        await _safe_edit(notice, f"❌ TikTok Audio ဒေါင်းမရပါ — {exc}")
+
+
+# ─── Facebook video ───────────────────────────────────────────────────────────
+
+async def _dl_facebook(uid: int, url: str):
+    notice = await _bot.send_message(uid, "⏳ Facebook video ဒေါင်းနေသည်…")
     try:
         result = await fb.download_facebook_video(url, uid, int(time.time()), vip_mode=False)
 
         if not result.ok:
-            await notice.edit_text(f"❌ {result.user_msg}")
-            return
+            return await _safe_edit(notice, f"❌ {result.user_msg}")
 
         if result.size_mb and result.size_mb > fb.MAX_TG_SIZE_MB:
             direct = await fb.get_direct_url(url)
-            if direct:
-                await notice.edit_text(
-                    f"⚠️ <b>ဖိုင် {result.size_mb:.1f} MB ကြီး — Direct Link ပေးပါသည်</b>\n\n"
-                    f"🔗 <a href=\"{direct}\">ဒေါင်းရန် နှိပ်ပါ</a>\n\n"
-                    "<i>Browser / Download Manager ဖြင့် Save လုပ်ပါ</i>",
-                    parse_mode="HTML",
-                )
-            else:
-                await notice.edit_text(
-                    f"⚠️ ဖိုင် {result.size_mb:.1f} MB ကြီးသဖြင့် Telegram သို့ ပို့မရပါ"
-                )
             if result.filepath:
                 downloader.cleanup_file(result.filepath)
-            return
+            if direct:
+                return await notice.edit_text(
+                    f"⚠️ <b>ဖိုင် {result.size_mb:.1f} MB ကြီး — Direct Link</b>\n\n"
+                    f"🔗 <a href=\"{direct}\">ဒေါင်းရန် နှိပ်ပါ</a>\n"
+                    "<i>Browser ဖြင့် Save လုပ်ပါ</i>",
+                    parse_mode="HTML",
+                )
+            return await _safe_edit(notice, f"⚠️ ဖိုင် {result.size_mb:.1f} MB ကြီး — Telegram သို့ ပို့မရပါ")
 
         try:
             ext   = os.path.splitext(result.filepath)[1] or ".mp4"
             title = result.title or "Facebook Video"
-            size  = f"{result.size_mb:.1f} MB" if result.size_mb else ""
-            f = FSInputFile(result.filepath, filename=f"facebook{ext}")
-            await _bot.send_video(
-                uid, video=f,
-                caption=f"📘 {title[:200]}\n📦 {size}"
-            )
+            sz    = f"{result.size_mb:.1f} MB" if result.size_mb else ""
+            await _bot.send_video(uid, video=FSInputFile(result.filepath, filename=f"fb{ext}"),
+                                  caption=f"📘 {title[:200]}\n📦 {sz}")
             await notice.delete()
         finally:
             if result.filepath:
                 downloader.cleanup_file(result.filepath)
 
     except Exception as exc:
-        log.error(f"[MiniApp] Facebook error uid={uid}: {exc}")
-        try:
-            await notice.edit_text(f"❌ Facebook ဒေါင်းမရပါ — {exc}")
-        except Exception:
-            pass
+        log.error(f"[MiniApp] facebook uid={uid}: {exc}")
+        await _safe_edit(notice, f"❌ Facebook ဒေါင်းမရပါ — {exc}")
 
 
-# ─── YouTube ──────────────────────────────────────────────────────────────────
+# ─── YouTube video ────────────────────────────────────────────────────────────
 
-async def _dl_youtube(uid: int, url: str, height: int) -> None:
-    notice = await _bot.send_message(
-        uid,
-        f"⏳ YouTube {'%dp' % height if height else 'best'} ဒေါင်းနေသည်..."
-    )
+async def _dl_youtube(uid: int, url: str, height: int):
+    note_txt = f"⏳ YouTube {'%dp' % height if height else 'best'} ဒေါင်းနေသည်…"
+    notice   = await _bot.send_message(uid, note_txt)
     try:
-        # Fetch info to check estimated size
-        info = await yt.fetch_youtube_info(url)
+        info   = await yt.fetch_youtube_info(url)
         chosen = next((f for f in (info.formats or []) if f.height == height), None) if height else None
         est_mb = chosen.size_mb if chosen else 0.0
 
         if est_mb > yt.MAX_TG_SIZE_MB:
-            await notice.edit_text(f"⏳ {height}p CDN link ရယူနေသည်...")
+            await _safe_edit(notice, f"⏳ {height}p CDN link ရယူနေသည်…")
             stream_url, note = await yt.get_direct_url(url, height)
             if stream_url:
-                await notice.edit_text(
-                    f"⚠️ <b>ဖိုင် ~{est_mb:.0f} MB ကြီး — CDN Link ပေးပါသည်</b>\n\n"
-                    f"🔗 <a href=\"{stream_url}\">ဒေါင်းရန် နှိပ်ပါ ({note})</a>\n\n"
-                    "<i>Link သည် ယာယီဖြစ်သဖြင့် မကြာမီ expire ဖြစ်မည်</i>\n"
-                    "📱 Browser / Download Manager ဖြင့် Save လုပ်ပါ",
+                return await notice.edit_text(
+                    f"⚠️ <b>ဖိုင် ~{est_mb:.0f} MB ကြီး — CDN Link</b>\n\n"
+                    f"🔗 <a href=\"{stream_url}\">ဒေါင်းရန် နှိပ်ပါ ({note})</a>\n"
+                    "<i>Link ယာယီဖြစ်သဖြင့် Browser ဖြင့် Save လုပ်ပါ</i>",
                     parse_mode="HTML",
                 )
-            else:
-                await notice.edit_text(
-                    f"⚠️ ဖိုင် ~{est_mb:.0f} MB ကြီးသဖြင့် Telegram သို့ ပို့မရပါ\n"
-                    "Resolution နိမ့်ချပြီး ထပ်ကြိုးစားပါ"
-                )
-            return
+            return await _safe_edit(notice, f"⚠️ ဖိုင် ~{est_mb:.0f} MB ကြီး — Resolution နိမ့်ချပြီး ထပ်ကြိုးစားပါ")
 
         result = await yt.download_youtube_video(url, uid, int(time.time()), height)
-
         if not result.ok:
-            await notice.edit_text(f"❌ {result.user_msg}")
-            return
+            return await _safe_edit(notice, f"❌ {result.user_msg}")
 
         if result.size_mb > yt.MAX_TG_SIZE_MB:
             if result.filepath:
                 downloader.cleanup_file(result.filepath)
             stream_url, note = await yt.get_direct_url(url, height)
             if stream_url:
-                await notice.edit_text(
-                    f"⚠️ <b>ဖိုင် {result.size_mb:.1f} MB ကြီး — CDN Link ပေးပါသည်</b>\n\n"
-                    f"🔗 <a href=\"{stream_url}\">ဒေါင်းရန် နှိပ်ပါ ({note})</a>\n\n"
-                    "<i>Link သည် ယာယီဖြစ်သဖြင့် မကြာမီ expire ဖြစ်မည်</i>",
+                return await notice.edit_text(
+                    f"⚠️ <b>ဖိုင် {result.size_mb:.1f} MB ကြီး — CDN Link</b>\n\n"
+                    f"🔗 <a href=\"{stream_url}\">ဒေါင်းရန် နှိပ်ပါ ({note})</a>",
                     parse_mode="HTML",
                 )
-            else:
-                await notice.edit_text("⚠️ ဖိုင်ကြီးသဖြင့် ပို့မရပါ — Resolution နိမ့်ချပြီး ထပ်ကြိုးစားပါ")
-            return
+            return await _safe_edit(notice, "⚠️ ဖိုင်ကြီးသဖြင့် ပို့မရပါ")
 
         try:
-            title    = info.title if info.ok else "YouTube Video"
-            size_tag = f"{result.size_mb:.1f} MB"
-            note_tag = result.format_note or ""
-            f = FSInputFile(result.filepath, filename="youtube.mp4")
+            title = info.title if info.ok else "YouTube Video"
             await _bot.send_video(
-                uid, video=f,
-                caption=f"🎬 {title[:200]}\n🎞 {note_tag}  📦 {size_tag}"
+                uid,
+                video=FSInputFile(result.filepath, filename="youtube.mp4"),
+                caption=f"🎬 {title[:200]}\n🎞 {result.format_note}  📦 {result.size_mb:.1f} MB",
             )
             await notice.delete()
         finally:
@@ -621,8 +935,98 @@ async def _dl_youtube(uid: int, url: str, height: int) -> None:
                 downloader.cleanup_file(result.filepath)
 
     except Exception as exc:
-        log.error(f"[MiniApp] YouTube error uid={uid}: {exc}")
+        log.error(f"[MiniApp] youtube uid={uid}: {exc}")
+        await _safe_edit(notice, f"❌ YouTube ဒေါင်းမရပါ — {exc}")
+
+
+# ─── YouTube audio ────────────────────────────────────────────────────────────
+
+def _yt_audio_sync(url: str, tpl: str) -> str | None:
+    """Download YouTube audio in a thread. Returns file path or None."""
+    opts: dict = {
+        "format":      "bestaudio[ext=m4a]/bestaudio/best",
+        "outtmpl":     tpl,
+        "quiet":       True,
+        "no_warnings": True,
+        "noplaylist":  True,
+    }
+    if _ffmpeg:
+        opts["ffmpeg_location"] = _ffmpeg
+        opts["postprocessors"]  = [{
+            "key": "FFmpegExtractAudio",
+            "preferredcodec": "mp3",
+            "preferredquality": "192",
+        }]
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            base = os.path.splitext(ydl.prepare_filename(info))[0]
+    except Exception as e:
+        log.error(f"[MiniApp] _yt_audio_sync error: {e}")
+        return None
+
+    for ext in (".mp3", ".m4a", ".opus", ".webm", ".ogg"):
+        p = base + ext
+        if os.path.exists(p):
+            return p
+    matches = _glob.glob(base + ".*")
+    return matches[0] if matches else None
+
+
+async def _dl_youtube_audio(uid: int, url: str):
+    notice = await _bot.send_message(uid, "⏳ YouTube audio ဒေါင်းနေသည်…")
+    tpl    = os.path.join(downloader.TEMP_DIR, f"ma_yta_{uid}_{int(time.time())}.%(ext)s")
+    try:
+        info = await yt.fetch_youtube_info(url)
+        fp   = await asyncio.get_event_loop().run_in_executor(None, _yt_audio_sync, url, tpl)
+        if not fp:
+            return await _safe_edit(notice, "❌ YouTube Audio ဒေါင်းမရပါ")
         try:
-            await notice.edit_text(f"❌ YouTube ဒေါင်းမရပါ — {exc}")
-        except Exception:
-            pass
+            title = info.title if info.ok else "YouTube Audio"
+            ext   = os.path.splitext(fp)[1].lstrip(".") or "mp3"
+            await _bot.send_audio(
+                uid,
+                audio=FSInputFile(fp, filename=f"audio.{ext}"),
+                caption=f"🎵 {title[:200]}",
+            )
+            await notice.delete()
+        finally:
+            downloader.cleanup_file(fp)
+    except Exception as exc:
+        log.error(f"[MiniApp] yt audio uid={uid}: {exc}")
+        await _safe_edit(notice, f"❌ YouTube Audio ဒေါင်းမရပါ — {exc}")
+
+
+# ─── YouTube thumbnail ────────────────────────────────────────────────────────
+
+async def _dl_youtube_thumb(uid: int, url: str):
+    notice = await _bot.send_message(uid, "⏳ YouTube thumbnail ဒေါင်းနေသည်…")
+    try:
+        info = await yt.fetch_youtube_info(url)
+        if not info.ok or not info.thumbnail:
+            return await _safe_edit(notice, "❌ Thumbnail ရှာမတွေ့ပါ")
+
+        fp = await yt.download_thumbnail_from_url(info.thumbnail, uid, int(time.time()))
+        if not fp:
+            return await _safe_edit(notice, "❌ Thumbnail ဒေါင်းမရပါ")
+        try:
+            await _bot.send_photo(
+                uid,
+                photo=FSInputFile(fp, filename="thumbnail.jpg"),
+                caption=f"🖼 {info.title[:200]}",
+            )
+            await notice.delete()
+        finally:
+            downloader.cleanup_file(fp)
+    except Exception as exc:
+        log.error(f"[MiniApp] yt thumb uid={uid}: {exc}")
+        await _safe_edit(notice, f"❌ Thumbnail ဒေါင်းမရပါ — {exc}")
+
+
+# ─── Utility ──────────────────────────────────────────────────────────────────
+
+async def _safe_edit(msg, text: str, **kw):
+    try:
+        await msg.edit_text(text, **kw)
+    except Exception:
+        pass
