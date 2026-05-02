@@ -22,6 +22,7 @@ from downloader import DownloadError
 import tasks as tk
 import broadcaster as bc
 import facebook_downloader as fb
+import youtube_downloader as yt
 
 API_TOKEN  = os.environ['BOT_TOKEN']
 ADMIN_ID   = int(os.environ['ADMIN_ID'])
@@ -44,6 +45,10 @@ class BroadcastFlow(StatesGroup):
 
 _processing: set = set()
 
+# ─── YouTube pending requests cache (uid → {url, info}) ──────────────────────
+_yt_pending: dict = {}
+YT_FREE_DAILY = 1      # free YouTube downloads per day for non-premium users
+
 
 def _trigger_referral_validation(uid: int) -> None:
     """Fire-and-forget: validate a pending referral for uid after their first download."""
@@ -61,9 +66,11 @@ START_TEXT = (
     "👋 မင်္ဂလာပါ! <b>Video Downloader Bot</b>\n\n"
     "🔥 Watermark မပါတဲ့ TikTok Video Download\n"
     "📘 Facebook Public Video Download\n"
+    "🎬 YouTube Video Download + Resolution ရွေးချယ်မှု\n"
+    "🖼 YouTube Thumbnail Download\n"
     "🎵 Audio / MP3 Extract\n"
     "⚡ လွယ်ကူမြန်ဆန်စွာ အသုံးပြုနိုင်ပါသည်\n\n"
-    "👇 TikTok သို့မဟုတ် Facebook link ကို ဒီ chat ထဲပို့လိုက်ပါ"
+    "👇 TikTok / Facebook / YouTube link ကို ဒီ chat ထဲပို့လိုက်ပါ"
 )
 
 HOWTO_TEXT = (
@@ -79,6 +86,7 @@ HOWTO_TEXT = (
     "• တစ်ကြိမ်တွင် link တစ်ခုသာ ပေးပို့ပါ\n"
     "• TikTok: 100MB ကျော်ပါက direct link ပေးသည်\n"
     "• Facebook: Public video/reel သာ ပံ့ပိုးသည်\n"
+    "• YouTube: တစ်ရက်ကို 1 ပုဒ် (Free) | Premium = Unlimited\n"
     "• Private ဗီဒီယို ဒေါင်းမရပါ\n\n"
     "🔗 <b>ပံ့ပိုးသော Link ပုံစံ:</b>\n"
     "📌 TikTok:\n"
@@ -87,7 +95,10 @@ HOWTO_TEXT = (
     "📌 Facebook:\n"
     "• facebook.com/watch/...   facebook.com/.../videos/...\n"
     "• facebook.com/reel/...   fb.watch/...\n"
-    "• facebook.com/share/v/...   facebook.com/share/r/..."
+    "• facebook.com/share/v/...   facebook.com/share/r/...\n\n"
+    "📌 YouTube:\n"
+    "• youtube.com/watch?v=...   youtu.be/...\n"
+    "• youtube.com/shorts/..."
 )
 
 HELP_TEXT = HOWTO_TEXT
@@ -2234,6 +2245,359 @@ async def btn_broadcast_deliveries(message: types.Message):
     )
 
 
+# ─── YouTube video handler ───────────────────────────────────────────────────
+
+def _yt_resolution_kb(formats: list, has_thumb: bool) -> InlineKeyboardMarkup:
+    """Build resolution selection keyboard for YouTube."""
+    rows = []
+    for fmt in formats[:6]:
+        rows.append([InlineKeyboardButton(
+            text=f"📹 {fmt.label}",
+            callback_data=f"yt_res_{fmt.height}",
+        )])
+    if has_thumb:
+        rows.append([InlineKeyboardButton(
+            text="🖼 Thumbnail သာ ဒေါင်းမယ်",
+            callback_data="yt_thumb",
+        )])
+    rows.append([InlineKeyboardButton(text="❌ Cancel", callback_data="yt_cancel")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+@dp.message(F.text.regexp(
+    r'https?://(?:www\.|m\.)?(?:youtube\.com|youtu\.be)/\S+'
+))
+async def youtube_handler(message: types.Message):
+    uid    = message.from_user.id
+    msg_id = message.message_id
+
+    _key = (uid, msg_id)
+    if _key in _processing:
+        log.warning(f"Duplicate YT processing blocked user={uid} msg={msg_id}")
+        return
+    _processing.add(_key)
+
+    try:
+        if roles.has_any_role(uid):
+            return await message.reply("Admin/Staff သည် Video ဒေါင်းခွင့်မရှိပါ။")
+        if db.is_banned(uid):
+            log.info(f"Banned user {uid} tried YT download")
+            return
+
+        # ── Cooldown ──────────────────────────────────────────────────────────
+        if not cd.should_bypass(uid) and cd.is_on_cooldown(uid):
+            secs = cd.remaining(uid)
+            log.info(f"Cooldown blocked user {uid} (YT) — {secs}s remaining")
+            return await message.reply(
+                f"⏳ ကျေးဇူးပြု၍ <b>{secs} seconds</b> စောင့်ပြီး ထပ်မံကြိုးစားပါ",
+                parse_mode="HTML",
+            )
+
+        # ── YouTube daily quota ───────────────────────────────────────────────
+        is_vip = ref.is_premium(uid)
+        if not is_vip:
+            yt_used       = db.get_yt_daily_count(uid)
+            ad_unlocked   = db.get_yt_ad_unlocked(uid)
+            max_allowed   = YT_FREE_DAILY + (1 if ad_unlocked else 0)
+
+            if yt_used >= max_allowed:
+                ad_on      = st.get_flag("ad_system_enabled")
+                prem_on    = st.get_flag("premium_enabled")
+                unlock_rows = []
+
+                if ad_on and not ad_unlocked:
+                    unlock_rows.append([InlineKeyboardButton(
+                        text="🎥 Ad ကြည့်ပြီး 1 ပုဒ် ထပ်ဒေါင်းမယ်",
+                        callback_data="cb_yt_ad_unlock",
+                    )])
+                if prem_on:
+                    unlock_rows.append([InlineKeyboardButton(
+                        text="⭐ Premium/VIP ဝယ်ရန် (Unlimited)",
+                        callback_data="cb_premium",
+                    )])
+
+                body = (
+                    "⚠️ <b>YouTube Daily Limit ပြည့်သွားပါပြီ</b>\n\n"
+                    f"တစ်ရက်ကို YouTube video <b>{YT_FREE_DAILY} ပုဒ်</b> သာ "
+                    "Free ဒေါင်းနိုင်ပါသည်။\n"
+                    "Unlimited ဒေါင်းလိုပါက <b>Premium/VIP</b> အသုံးပြုပါ။\n\n"
+                )
+                if unlock_rows:
+                    body += "📌 ဒေါင်းလုပ်ဆက်ရန် အောက်မှ ရွေးချယ်ပါ:"
+                    return await message.reply(
+                        body, parse_mode="HTML",
+                        reply_markup=InlineKeyboardMarkup(inline_keyboard=unlock_rows),
+                    )
+                else:
+                    body += "မနက်ဖြန် ထပ်ကြိုးစားပါ။ (Resets every midnight UTC)"
+                    return await message.reply(body, parse_mode="HTML")
+
+        # ── Extract URL ───────────────────────────────────────────────────────
+        url = yt.extract_youtube_url(message.text or "")
+        if not url:
+            return await message.reply("❌ YouTube link မမှန်ကန်ပါ။ ထပ်ကြိုးစားပါ။")
+
+        # ── Fetch video info ──────────────────────────────────────────────────
+        wait = await message.reply("🔍 YouTube video info ရယူနေသည်... ခဏစောင့်ပါ")
+        log.info(f"[YT] info fetch started — user={uid} url={url}")
+        info = await yt.fetch_youtube_info(url)
+
+        if not info.ok:
+            log.warning(f"[YT] info fetch failed — user={uid}: {info.error_msg}")
+            await wait.delete()
+            return await message.reply(
+                "❌ <b>YouTube Video ရယူမရပါ</b>\n\n"
+                "Link မှားနေသည် / Private / Region-blocked ဖြစ်နိုင်သည်\n"
+                "📘 /help နှိပ်ပါ",
+                parse_mode="HTML",
+            )
+
+        if not info.formats:
+            await wait.delete()
+            return await message.reply(
+                "❌ <b>Download format မတွေ့ပါ</b>\n\n"
+                "ဤ video ကို ဒေါင်းလို့မရနိုင်ပါ (Copyright / Restricted).",
+                parse_mode="HTML",
+            )
+
+        # ── Cache & show resolution picker ────────────────────────────────────
+        _yt_pending[uid] = {"url": url, "info": info}
+
+        dur_m, dur_s = divmod(info.duration, 60)
+        dur_str = f"{dur_m}:{dur_s:02d}" if info.duration else "—"
+        vip_note = " 💎 VIP Quality" if is_vip else ""
+
+        await wait.edit_text(
+            f"🎬 <b>{info.title[:80]}</b>\n"
+            f"⏱ Duration: {dur_str}{vip_note}\n\n"
+            "📥 <b>Resolution ရွေးပါ</b> (သို့မဟုတ် Thumbnail ဒေါင်းပါ):",
+            parse_mode="HTML",
+            reply_markup=_yt_resolution_kb(info.formats, bool(info.thumbnail)),
+        )
+        log.info(
+            f"[YT] resolution picker shown — user={uid} "
+            f"formats={len(info.formats)} title={info.title[:40]}"
+        )
+
+    finally:
+        _processing.discard(_key)
+
+
+@dp.callback_query(F.data.startswith("yt_res_"))
+async def cb_yt_resolution(call: types.CallbackQuery):
+    uid = call.from_user.id
+    await call.answer()
+
+    if db.is_banned(uid):
+        return await call.answer("⛔ You are banned.", show_alert=True)
+
+    pending = _yt_pending.get(uid)
+    if not pending:
+        return await call.message.edit_text(
+            "❌ Session expired. YouTube link ကို ထပ်ပေးပို့ပါ။"
+        )
+
+    try:
+        height = int(call.data.split("_")[2])
+    except (IndexError, ValueError):
+        return await call.message.edit_text("❌ Resolution မမှန်ကန်ပါ။")
+
+    url  = pending["url"]
+    info = pending["info"]
+
+    # ── Re-check quota before download ───────────────────────────────────────
+    is_vip = ref.is_premium(uid)
+    if not is_vip:
+        yt_used     = db.get_yt_daily_count(uid)
+        ad_unlocked = db.get_yt_ad_unlocked(uid)
+        max_allowed = YT_FREE_DAILY + (1 if ad_unlocked else 0)
+        if yt_used >= max_allowed:
+            _yt_pending.pop(uid, None)
+            return await call.message.edit_text(
+                "⚠️ YouTube daily limit ပြည့်သွားပါပြီ။ မနက်ဖြန် ထပ်ကြိုးစားပါ။"
+            )
+
+    _yt_pending.pop(uid, None)
+    cd.set_cooldown(uid)
+
+    await call.message.edit_text(
+        f"⏳ <b>{height}p</b> quality ဒေါင်းနေသည်... ခဏစောင့်ပါ\n"
+        f"📝 {info.title[:60]}",
+        parse_mode="HTML",
+    )
+    log.info(f"[YT] download started — user={uid} height={height} url={url}")
+
+    result = await yt.download_youtube_video(
+        url, uid, call.message.message_id, height
+    )
+
+    try:
+        if not result.ok:
+            db.log_download(uid, url, "youtube_video", "failed", result.error_type)
+            return await call.message.edit_text(
+                result.user_msg, parse_mode="HTML"
+            )
+
+        if result.size_mb > yt.MAX_TG_SIZE_MB:
+            log.warning(
+                f"[YT] too large — user={uid} size={result.size_mb:.2f}MB"
+            )
+            db.log_download(uid, url, "youtube_video", "failed", "too_large")
+            return await call.message.edit_text(
+                f"⚠️ <b>ဖိုင်ကြီးနေသဖြင့် ({result.size_mb:.2f} MB) "
+                "Telegram သို့ တိုက်ရိုက်ပို့မရပါ</b>\n\n"
+                "50 MB ကျော်သော ဗီဒီယိုများ Bot မှ ပို့မရပါ။",
+                parse_mode="HTML",
+            )
+
+        quality_tag = f"\n🎬 {result.format_note}" if result.format_note else ""
+        size_tag    = f"\n📦 {result.size_mb:.2f} MB"
+        vip_tag     = "\n💎 VIP Quality" if is_vip else ""
+        caption     = _cap(
+            info.title, "🎬 YouTube\n📝 ",
+            f"{quality_tag}{size_tag}{vip_tag}"
+        )
+
+        vid_file = FSInputFile(result.filepath, filename="youtube_video.mp4")
+
+        if is_vip:
+            await bot.send_document(
+                chat_id=call.message.chat.id,
+                document=vid_file,
+                caption=caption,
+            )
+            log.info(
+                f"[YT] sent as document (VIP) — user={uid} "
+                f"size={result.size_mb:.2f}MB"
+            )
+        else:
+            await bot.send_video(
+                chat_id=call.message.chat.id,
+                video=vid_file,
+                caption=caption,
+            )
+            log.info(
+                f"[YT] sent as video (FREE) — user={uid} "
+                f"size={result.size_mb:.2f}MB"
+            )
+
+        try:
+            await call.message.delete()
+        except Exception:
+            pass
+
+        db.log_download(uid, url, "youtube_video", "success")
+        _trigger_referral_validation(uid)
+        db.increment_yt_daily(uid)
+        st.increment_usage(uid)
+
+    except Exception as exc:
+        log.error(f"[YT] send error — user={uid}: {exc}")
+        db.log_download(uid, url, "youtube_video", "failed", str(exc))
+        try:
+            await call.message.edit_text(
+                "⚠️ YouTube video ဒေါင်းမရပါ။ နောက်မှ ထပ်ကြိုးစားပါ။"
+            )
+        except Exception:
+            pass
+
+    finally:
+        if result and result.ok and result.filepath:
+            downloader.cleanup_file(result.filepath)
+
+
+@dp.callback_query(F.data == "yt_thumb")
+async def cb_yt_thumbnail(call: types.CallbackQuery):
+    uid = call.from_user.id
+    await call.answer()
+
+    if db.is_banned(uid):
+        return await call.answer("⛔ You are banned.", show_alert=True)
+
+    pending = _yt_pending.get(uid)
+    if not pending:
+        return await call.message.edit_text(
+            "❌ Session expired. YouTube link ကို ထပ်ပေးပို့ပါ။"
+        )
+
+    url  = pending["url"]
+    info = pending["info"]
+    _yt_pending.pop(uid, None)
+
+    if not info.thumbnail:
+        return await call.message.edit_text("❌ Thumbnail URL မတွေ့ပါ။")
+
+    await call.message.edit_text("⏳ Thumbnail ဒေါင်းနေသည်... ခဏစောင့်ပါ")
+    log.info(f"[YT] thumbnail download — user={uid}")
+
+    thumb_path = await yt.download_thumbnail_from_url(
+        info.thumbnail, uid, call.message.message_id
+    )
+
+    if not thumb_path:
+        return await call.message.edit_text(
+            "❌ Thumbnail ဒေါင်းမရပါ။ နောက်မှ ထပ်ကြိုးစားပါ။"
+        )
+
+    try:
+        caption = _cap(info.title, "🖼 YouTube Thumbnail\n📝 ")
+        await bot.send_photo(
+            chat_id=call.message.chat.id,
+            photo=FSInputFile(thumb_path),
+            caption=caption,
+        )
+        try:
+            await call.message.delete()
+        except Exception:
+            pass
+        log.info(f"[YT] thumbnail sent — user={uid}")
+    except Exception as e:
+        log.error(f"[YT] thumbnail send error — user={uid}: {e}")
+        await call.message.edit_text("❌ Thumbnail ဒေါင်းမရပါ။ နောက်မှ ထပ်ကြိုးစားပါ။")
+    finally:
+        downloader.cleanup_file(thumb_path)
+
+
+@dp.callback_query(F.data == "yt_cancel")
+async def cb_yt_cancel(call: types.CallbackQuery):
+    uid = call.from_user.id
+    await call.answer()
+    _yt_pending.pop(uid, None)
+    try:
+        await call.message.edit_text("❌ YouTube download cancelled.")
+    except Exception:
+        pass
+    log.info(f"[YT] download cancelled by user={uid}")
+
+
+@dp.callback_query(F.data == "cb_yt_ad_unlock")
+async def cb_yt_ad_unlock(call: types.CallbackQuery):
+    """Grant 1 extra YouTube download today after user views an ad."""
+    uid = call.from_user.id
+    await call.answer()
+
+    if db.is_banned(uid):
+        return await call.answer("⛔ You are banned.", show_alert=True)
+
+    if not st.get_flag("ad_system_enabled"):
+        return await call.answer("Ad system မဖွင့်ရသေးပါ။", show_alert=True)
+
+    if db.get_yt_ad_unlocked(uid):
+        return await call.message.edit_text(
+            "ℹ️ ယနေ့ Ad-unlock ကို အသုံးပြုပြီးပါပြီ။\n"
+            "မနက်ဖြန် ထပ်ကြိုးစားပါ သို့မဟုတ် Premium/VIP ဝယ်ပါ။"
+        )
+
+    db.grant_yt_ad_unlock(uid)
+    log.info(f"[YT] ad unlock granted — user={uid}")
+
+    await call.message.edit_text(
+        "✅ <b>Ad ကြည့်ပြီးပါပြီ — 1 ပုဒ် ထပ်ဒေါင်းနိုင်ပါပြီ!</b>\n\n"
+        "🎬 YouTube link ကို ထပ်ပေးပို့ပါ...",
+        parse_mode="HTML",
+    )
+
+
 # ─── Facebook video handler ───────────────────────────────────────────────────
 
 @dp.message(F.text.regexp(
@@ -2433,7 +2797,10 @@ async def non_tiktok_url_handler(message: types.Message):
     log.info(f"User {uid} sent unsupported URL")
     await message.reply(
         "❌ <b>ပံ့ပိုးမထားသော Link</b>\n\n"
-        "TikTok သို့မဟုတ် Facebook video link တစ်ခုကို ပေးပို့ပါ\n"
+        "ပံ့ပိုးသော Platform များ:\n"
+        "• 🔥 TikTok\n"
+        "• 📘 Facebook\n"
+        "• 🎬 YouTube\n\n"
         "📘 အသုံးပြုနည်း သိရှိရန် /help နှိပ်ပါ",
         parse_mode="HTML",
     )

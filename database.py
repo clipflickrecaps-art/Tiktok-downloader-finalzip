@@ -183,6 +183,16 @@ def init_db():
                     delete_error TEXT
                 )
             """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS yt_daily_usage (
+                    user_id    INTEGER NOT NULL,
+                    date       TEXT    NOT NULL,
+                    yt_count   INTEGER NOT NULL DEFAULT 0,
+                    ad_unlocked INTEGER NOT NULL DEFAULT 0,
+                    updated_at TEXT    NOT NULL,
+                    PRIMARY KEY (user_id, date)
+                )
+            """)
         _migrate_broadcasts_phase2()
         _migrate_premium_columns()
         log.info("Database initialised (bot_data.db)")
@@ -438,6 +448,78 @@ def get_download_history(limit=2000):
     except Exception as e:
         log.error(f"get_download_history failed: {e}")
         return []
+
+
+# --- YouTube daily usage ---
+
+def get_yt_daily_count(user_id: int) -> int:
+    """Return today's YouTube download count for a user."""
+    today = datetime.now(timezone.utc).date().isoformat()
+    try:
+        with _connect() as conn:
+            row = conn.execute(
+                "SELECT yt_count FROM yt_daily_usage WHERE user_id=? AND date=?",
+                (int(user_id), today)
+            ).fetchone()
+        return row[0] if row else 0
+    except Exception as e:
+        log.error(f"get_yt_daily_count failed for {user_id}: {e}")
+        return 0
+
+
+def get_yt_ad_unlocked(user_id: int) -> bool:
+    """Return whether the user has used an ad-unlock for YouTube today."""
+    today = datetime.now(timezone.utc).date().isoformat()
+    try:
+        with _connect() as conn:
+            row = conn.execute(
+                "SELECT ad_unlocked FROM yt_daily_usage WHERE user_id=? AND date=?",
+                (int(user_id), today)
+            ).fetchone()
+        return bool(row[0]) if row else False
+    except Exception as e:
+        log.error(f"get_yt_ad_unlocked failed for {user_id}: {e}")
+        return False
+
+
+def increment_yt_daily(user_id: int) -> None:
+    """Increment today's YouTube download counter."""
+    today = datetime.now(timezone.utc).date().isoformat()
+    now   = datetime.now(timezone.utc).isoformat()
+    try:
+        with _connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO yt_daily_usage (user_id, date, yt_count, ad_unlocked, updated_at)
+                VALUES (?, ?, 1, 0, ?)
+                ON CONFLICT(user_id, date) DO UPDATE SET
+                    yt_count   = yt_count + 1,
+                    updated_at = excluded.updated_at
+                """,
+                (int(user_id), today, now)
+            )
+    except Exception as e:
+        log.error(f"increment_yt_daily failed for {user_id}: {e}")
+
+
+def grant_yt_ad_unlock(user_id: int) -> None:
+    """Mark that the user has used their ad-unlock for YouTube today."""
+    today = datetime.now(timezone.utc).date().isoformat()
+    now   = datetime.now(timezone.utc).isoformat()
+    try:
+        with _connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO yt_daily_usage (user_id, date, yt_count, ad_unlocked, updated_at)
+                VALUES (?, ?, 0, 1, ?)
+                ON CONFLICT(user_id, date) DO UPDATE SET
+                    ad_unlocked = 1,
+                    updated_at  = excluded.updated_at
+                """,
+                (int(user_id), today, now)
+            )
+    except Exception as e:
+        log.error(f"grant_yt_ad_unlock failed for {user_id}: {e}")
 
 
 # --- Analytics ---
