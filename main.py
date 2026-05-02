@@ -1527,14 +1527,15 @@ async def tiktok_handler(message: types.Message):
 
         log.info(f"Video found for user {uid} — size: {round(video_size_mb, 2)} MB")
 
-        if video_size_mb > 100:
+        if video_size_mb > fb.MAX_TG_SIZE_MB:
             log.info(f"File too large ({round(video_size_mb, 2)} MB) — sending link to {uid}")
             db.log_download(uid, url, "video", "success")
             _trigger_referral_validation(uid)
             st.increment_usage(uid)
             await wait.edit_text(
-                f"⚠️ <b>ဖိုင်ကြီးသဖြင့် Direct Link ပေးလိုက်ပါသည်</b>\n\n"
-                f"🔗 <a href=\"{video_url}\">ဗီဒီယို ဒေါင်းရန် နှိပ်ပါ</a>",
+                f"⚠️ <b>ဖိုင်ကြီးသဖြင့် ({round(video_size_mb, 2)} MB) Direct Link ပေးလိုက်ပါသည်</b>\n\n"
+                f"🔗 <a href=\"{video_url}\">ဗီဒီယို ဒေါင်းရန် နှိပ်ပါ</a>\n\n"
+                f"<i>Browser မှ ဖွင့်ပြီး Save လုပ်နိုင်သည်</i>",
                 parse_mode="HTML", reply_markup=kb
             )
             return
@@ -3001,14 +3002,30 @@ async def facebook_handler(message: types.Message):
 
             # ── File-size gate ────────────────────────────────────────────────
             if result.size_mb > fb.MAX_TG_SIZE_MB:
-                log.warning(f"[FB] too large — user={uid} size={result.size_mb:.2f}MB")
-                db.log_download(uid, url, "facebook_video", "failed", "too_large")
-                await wait.edit_text(
-                    f"⚠️ <b>ဖိုင်ကြီးနေသဖြင့် ({result.size_mb:.2f} MB) "
-                    "Telegram သို့ တိုက်ရိုက်ပို့မရပါ</b>\n\n"
-                    "50 MB ကျော်သော ဗီဒီယိုများ Bot မှ ပို့မရပါ။",
-                    parse_mode="HTML",
-                )
+                log.warning(f"[FB] too large — user={uid} size={result.size_mb:.2f}MB — extracting direct URL")
+                db.log_download(uid, url, "facebook_video", "success", "direct_link")
+                _trigger_referral_validation(uid)
+                st.increment_usage(uid)
+
+                direct_url = await fb.get_direct_url(url)
+                if direct_url:
+                    log.info(f"[FB] direct URL extracted for user={uid}")
+                    await wait.edit_text(
+                        f"⚠️ <b>ဖိုင်ကြီးနေသဖြင့် ({result.size_mb:.2f} MB) "
+                        "Telegram သို့ တိုက်ရိုက်ပို့မရပါ</b>\n\n"
+                        f"🔗 <a href=\"{direct_url}\">ဗီဒီယို ဒေါင်းရန် နှိပ်ပါ</a>\n\n"
+                        "<i>Browser မှ ဖွင့်ပြီး Save လုပ်နိုင်သည်</i>",
+                        parse_mode="HTML",
+                    )
+                else:
+                    log.warning(f"[FB] direct URL extraction failed for user={uid}")
+                    await wait.edit_text(
+                        f"⚠️ <b>ဖိုင်ကြီးနေသဖြင့် ({result.size_mb:.2f} MB) "
+                        "Telegram သို့ တိုက်ရိုက်ပို့မရပါ</b>\n\n"
+                        "50 MB ကျော်သော ဗီဒီယိုများ Bot မှ ပို့မရပါ။\n"
+                        "Original Facebook page မှ ဒေါင်းနိုင်ပါသည်။",
+                        parse_mode="HTML",
+                    )
                 return
 
             # ── Caption ───────────────────────────────────────────────────────

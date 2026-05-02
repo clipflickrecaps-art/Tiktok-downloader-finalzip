@@ -484,6 +484,55 @@ def _run_provider_pipeline(
     return _fail(last_err.error_type, last_err.raw)
 
 
+# ─── Direct URL extractor (no download) ──────────────────────────────────────
+
+def get_direct_url_sync(url: str) -> str | None:
+    """Extract the best direct CDN video URL without downloading.
+
+    Uses yt-dlp in info-only mode.  Prefers pre-merged MP4; falls back to any
+    URL found in the format list.  Returns None on any failure.
+    """
+    ydl_opts: dict = {
+        "format":      _YDL_FORMAT_FREE,
+        "noplaylist":  True,
+        "quiet":       True,
+        "no_warnings": True,
+        "socket_timeout": 20,
+        "http_headers": _YDL_HEADERS,
+    }
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+        if not info:
+            return None
+
+        # Prefer the top-level url (pre-merged stream) when present
+        if info.get("url"):
+            log.info("[FB] get_direct_url — top-level url found")
+            return info["url"]
+
+        # Walk the formats list; pick the first one with a URL
+        for fmt in reversed(info.get("formats", [])):
+            if fmt.get("url"):
+                log.info(f"[FB] get_direct_url — format url found ({fmt.get('format_id')})")
+                return fmt["url"]
+
+    except Exception as exc:
+        log.warning(f"[FB] get_direct_url_sync failed: {exc}")
+
+    return None
+
+
+async def get_direct_url(url: str) -> str | None:
+    """Async wrapper around get_direct_url_sync."""
+    loop = asyncio.get_event_loop()
+    try:
+        return await loop.run_in_executor(None, get_direct_url_sync, url)
+    except Exception as exc:
+        log.warning(f"[FB] get_direct_url async error: {exc}")
+        return None
+
+
 # ─── Public async entry point ─────────────────────────────────────────────────
 
 async def download_facebook_video(
