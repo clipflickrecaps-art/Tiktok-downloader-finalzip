@@ -5,7 +5,7 @@ from aiogram.types import (
     InlineKeyboardMarkup, InlineKeyboardButton,
     ReplyKeyboardMarkup, KeyboardButton,
     InputMediaPhoto, FSInputFile,
-    WebAppInfo, MenuButtonWebApp,
+    WebAppInfo, MenuButtonWebApp, BotCommand,
 )
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -77,30 +77,32 @@ START_TEXT = (
 
 HOWTO_TEXT = (
     "📘 <b>အသုံးပြုနည်း</b>\n"
-    "━━━━━━━━━━━━━━━━\n"
+    "━━━━━━━━━━━━━━━━\n\n"
+    "📱 <b>Mini App (အသစ်)</b>\n"
+    "Bot မှ 📱 Open App ခလုတ် နှိပ်ပါ\n"
+    "• URL ကူးထည့် → Device ထဲ တိုက်ရိုက် ဒေါင်း\n"
+    "• TikTok Audio · YouTube Audio · Thumbnail ဒေါင်းနိုင်\n"
+    "• ဒေါင်းမှတ်တမ်း · Profile · Quota ကြည့်နိုင်\n\n"
+    "💬 <b>Bot (Chat)</b>\n"
     "1️⃣ Video link ကို copy လုပ်ပါ\n"
     "2️⃣ Bot ကို paste လုပ်ပြီး ပေးပို့ပါ\n"
-    "3️⃣ Bot မှ ဗီဒီယို ပေးပို့မည်\n"
+    "3️⃣ Bot မှ ဗီဒီယို chat ထဲ ပေးပို့မည်\n"
     "4️⃣ 🎵 ခလုတ် နှိပ်ပြီး TikTok Audio ဒေါင်းနိုင်သည်\n\n"
+    "⌨️ <b>Commands</b>\n"
+    "• /myhistory — ကျွန်ုပ်၏ ဒေါင်းမှတ်တမ်း\n"
+    "• /quota — ယနေ့ Quota စစ်ကြည့်မည်\n"
+    "• /referral — Referral link ရယူမည်\n\n"
     "⏱ <b>Cooldown:</b> တောင်းဆိုမှုတစ်ခုပြီးနောက် "
     f"{cd.COOLDOWN_SECONDS} seconds စောင့်ရသည်\n\n"
     "⚠️ <b>မှတ်ချက်:</b>\n"
-    "• တစ်ကြိမ်တွင် link တစ်ခုသာ ပေးပို့ပါ\n"
-    "• TikTok: 100MB ကျော်ပါက direct link ပေးသည်\n"
+    "• TikTok: 50MB ကျော်ပါက direct link ပေးသည်\n"
     "• Facebook: Public video/reel သာ ပံ့ပိုးသည်\n"
     "• YouTube: တစ်ရက်ကို 1 ပုဒ် (Free) | Premium = Unlimited\n"
     "• Private ဗီဒီယို ဒေါင်းမရပါ\n\n"
-    "🔗 <b>ပံ့ပိုးသော Link ပုံစံ:</b>\n"
-    "📌 TikTok:\n"
-    "• tiktok.com/...   vm.tiktok.com/...\n"
-    "• vt.tiktok.com/...   m.tiktok.com/...\n\n"
-    "📌 Facebook:\n"
-    "• facebook.com/watch/...   facebook.com/.../videos/...\n"
-    "• facebook.com/reel/...   fb.watch/...\n"
-    "• facebook.com/share/v/...   facebook.com/share/r/...\n\n"
-    "📌 YouTube:\n"
-    "• youtube.com/watch?v=...   youtu.be/...\n"
-    "• youtube.com/shorts/..."
+    "🔗 <b>ပံ့ပိုးသော Links:</b>\n"
+    "📌 TikTok — tiktok.com · vm.tiktok.com · vt.tiktok.com\n"
+    "📌 Facebook — facebook.com · fb.watch\n"
+    "📌 YouTube — youtube.com · youtu.be · youtube.com/shorts"
 )
 
 HELP_TEXT = HOWTO_TEXT
@@ -534,6 +536,79 @@ async def stats_command_handler(message: types.Message):
     except Exception as e:
         log.error(f"[stats] error: {e}")
         await message.reply("❌ Stats ထုတ်ရာတွင် အမှားဖြစ်သွားပါသည်")
+
+
+@dp.message(Command("myhistory"))
+async def myhistory_handler(message: types.Message):
+    uid = message.from_user.id
+    if db.is_banned(uid):
+        return
+    items = db.get_user_download_history(uid, 10)
+    if not items:
+        return await message.reply(
+            "📭 ဒေါင်းမှတ်တမ်း မရှိသေးပါ\n\nURL ပေးပို့ပြီး ဒေါင်းကြည့်ပါ"
+        )
+    icons = {
+        "video": "📹 TikTok Video", "audio": "🎵 TikTok Audio",
+        "youtube_video": "🎬 YouTube", "facebook_video": "📘 Facebook",
+        "direct_link": "🔗 Direct Link",
+    }
+    lines = []
+    for i, r in enumerate(items, 1):
+        mtype  = r["media_type"] or "download"
+        status = "✅" if r["status"] == "success" else "❌"
+        ts     = (r["created_at"] or "")[:16].replace("T", " ")
+        label  = icons.get(mtype, f"📥 {mtype}")
+        lines.append(f"{i}. {status} {label}\n    <code>{ts} UTC</code>")
+    await message.answer(
+        "📋 <b>ကျွန်ုပ်၏ ဒေါင်းမှတ်တမ်း</b> (နောက်ဆုံး ၁၀ ပုဒ်)\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n" + "\n\n".join(lines),
+        parse_mode="HTML",
+    )
+
+
+@dp.message(Command("quota"))
+async def quota_handler(message: types.Message):
+    from datetime import timedelta
+    uid     = message.from_user.id
+    if db.is_banned(uid):
+        return
+    is_prem = ref.is_premium(uid)
+    monet   = st.get_flag("monetization_enabled")
+    if is_prem:
+        return await message.reply(
+            "💎 <b>Premium User</b>\n"
+            "━━━━━━━━━━━━━━━━\n"
+            "Quota Unlimited — ဒေါင်းနိုင်သမျှ ဒေါင်းနိုင်သည်",
+            parse_mode="HTML",
+        )
+    if not monet:
+        return await message.reply(
+            "ℹ️ ယနေ့ Quota limit မရှိသေးပါ\nဒေါင်းနိုင်သမျှ ဒေါင်းနိုင်သည်"
+        )
+    st.reset_usage_if_needed(uid)
+    usg       = st.get_user_usage(uid)
+    used      = usg.get("daily_used_count", 0)
+    limit     = st.get_daily_free_limit()
+    remaining = max(0, limit - used)
+    yt_used   = db.get_yt_daily_count(uid)
+    from datetime import datetime, timezone, timedelta as _td
+    now      = datetime.now(timezone.utc)
+    midnight = (now + _td(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    diff     = midnight - now
+    h, m     = diff.seconds // 3600, (diff.seconds % 3600) // 60
+    filled   = int(used / limit * 10) if limit else 0
+    bar      = "🟦" * filled + "⬜" * (10 - filled)
+    await message.answer(
+        f"📊 <b>ယနေ့ Download Quota</b>\n"
+        f"━━━━━━━━━━━━━━━━\n"
+        f"{bar}\n"
+        f"✅ ဒေါင်းပြီး: {used} / {limit} ပုဒ်\n"
+        f"⏳ ကျန်: <b>{remaining} ပုဒ်</b>\n"
+        f"🎬 YouTube ယနေ့: {yt_used} ပုဒ်\n\n"
+        f"🔄 Reset: <b>{h}h {m}m</b> ကျန်သည်",
+        parse_mode="HTML",
+    )
 
 
 @dp.message(F.text == "📊 Analytics (စစ်ဆေးရန်)")
@@ -3359,6 +3434,17 @@ async def _run_webhook(domain: str):
         log.info(f"[MiniApp] menu button set → https://{domain}/app")
     except Exception as _e:
         log.warning(f"[MiniApp] could not set menu button: {_e}")
+
+    try:
+        await bot.set_my_commands([
+            BotCommand(command="start",     description="Bot ကို စတင်မည် / ပင်မစာမျက်နှာ"),
+            BotCommand(command="help",      description="အသုံးပြုနည်း / ဒေါင်းနည်း"),
+            BotCommand(command="myhistory", description="ကျွန်ုပ်၏ ဒေါင်းမှတ်တမ်း (နောက်ဆုံး ၁၀)"),
+            BotCommand(command="quota",     description="ယနေ့ Download Quota စစ်ကြည့်မည်"),
+        ])
+        log.info("[Bot] Commands menu registered (4 commands)")
+    except Exception as _e:
+        log.warning(f"[Bot] set_my_commands failed: {_e}")
 
     try:
         await asyncio.Event().wait()   # run forever

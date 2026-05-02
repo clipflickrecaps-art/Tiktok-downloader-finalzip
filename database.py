@@ -450,6 +450,21 @@ def get_download_history(limit=2000):
         return []
 
 
+def get_user_download_history(user_id: int, limit: int = 10) -> list:
+    """Return last N download records for a specific user."""
+    try:
+        with _connect() as conn:
+            return conn.execute(
+                """SELECT media_type, status, created_at
+                   FROM downloads WHERE user_id = ?
+                   ORDER BY created_at DESC LIMIT ?""",
+                (int(user_id), limit),
+            ).fetchall()
+    except Exception as e:
+        log.error(f"get_user_download_history failed for {user_id}: {e}")
+        return []
+
+
 # --- YouTube daily usage ---
 
 def get_yt_daily_count(user_id: int) -> int:

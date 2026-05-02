@@ -289,6 +289,19 @@ h2{font-size:.9rem;font-weight:600;color:var(--sub);margin:16px 0 8px;
 .dl-note{font-size:.71rem;color:var(--sub);text-align:center;margin:-6px 0 10px;
   line-height:1.4}
 
+/* ── platform detect pill ── */
+.plat-pill{display:inline-flex;align-items:center;gap:4px;border-radius:20px;
+  padding:3px 10px;font-size:.73rem;font-weight:600;margin-bottom:8px}
+.pp-tt{background:#2a0a10;color:var(--tiktok);border:1px solid var(--tiktok)}
+.pp-fb{background:#0a1529;color:var(--fb);border:1px solid var(--fb)}
+.pp-yt{background:#2a0a0a;color:var(--yt);border:1px solid var(--yt)}
+
+/* ── retry button ── */
+.retry-btn{width:100%;margin-top:8px;background:transparent;
+  border:1.5px solid var(--sub);border-radius:8px;padding:8px;
+  color:var(--sub);font-size:.82rem;cursor:pointer}
+.retry-btn:active{background:#21262d}
+
 /* ── share button ── */
 .share-btn{width:100%;margin-top:10px;background:linear-gradient(135deg,#0e6aa8,#1877f2);
   border:none;border-radius:10px;padding:11px;color:#fff;font-size:.88rem;
@@ -316,6 +329,7 @@ h2{font-size:.9rem;font-weight:600;color:var(--sub);margin:16px 0 8px;
       <button id="clr" onclick="clearUrl()">✕</button>
     </div>
     <button id="paste" onclick="pasteUrl()">📋 Clipboard မှ URL ကူးထည့်ရန်</button>
+    <div id="plat-pill" style="display:none"></div>
 
     <div id="pcard">
       <div id="pbadge" class="pbadge"></div>
@@ -355,6 +369,7 @@ h2{font-size:.9rem;font-weight:600;color:var(--sub);margin:16px 0 8px;
     </div>
 
     <div id="status"></div>
+    <button id="retry-btn" class="retry-btn" onclick="retryLast()" style="display:none">🔄 ထပ်ကြိုးစားမည်</button>
   </div>
 
   <!-- ── History Tab ─────────────────────────────────────────────── -->
@@ -417,11 +432,12 @@ function onUrl() {
   const v = inp.value.trim();
   document.getElementById("clr").style.display = v ? "block" : "none";
   hide("pcard"); hide("acts"); hide("lcard"); hide("infobtn");
-  hide("mode-row"); hide("dl-note");
+  hide("mode-row"); hide("dl-note"); hide("plat-pill");
   setStatus(""); videoInfo = null; selH = 0;
   if (!v) return;
   platform = detect(v);
   if (!platform) return;
+  updatePlatPill(platform);
   if (platform === "youtube") {
     show("infobtn");
   } else {
@@ -566,6 +582,7 @@ function setMode(m) {
     : "Bot မှတဆင့် Telegram chat ထဲ ဖိုင် ပေးပို့မည်";
 }
 async function doAction(type) {
+  _lastAction = () => doAction(type);
   if (downloadMode === "device") await doDirectDownload(type);
   else await doDownload(type);
 }
@@ -666,6 +683,7 @@ async function loadProfile() {
         </div>
         ${p.limit > 0 ? `<div class="bar-bg"><div class="bar-fill" style="width:${pct}%"></div></div>` : ""}
         <div class="prow"><span class="plbl">YouTube ယနေ့</span><span class="pval">${p.yt_used} ပုဒ်</span></div>
+        <div class="prow"><span class="plbl">🔄 Reset</span><span class="pval" id="reset-timer" style="color:var(--yellow)">…</span></div>
       </div>` : ""}
       ${p.is_premium && p.expiry ? `
       <div class="pcard">
@@ -674,9 +692,45 @@ async function loadProfile() {
       </div>` : ""}
     `;
     profLoaded = true;
+    (function tick() {
+      const t = document.getElementById("reset-timer");
+      if (t) { t.textContent = resetTimerStr(); setTimeout(tick, 60000); }
+    })();
   } catch (e) {
     el.innerHTML = '<div class="empty">❌ Profile ရယူမရပါ</div>';
   }
+}
+
+/* ── Platform pill ── */
+function updatePlatPill(p) {
+  const el  = document.getElementById("plat-pill");
+  const cfg = {
+    tiktok:   ["pp-tt", "✓ TikTok URL"],
+    facebook: ["pp-fb", "✓ Facebook URL"],
+    youtube:  ["pp-yt", "✓ YouTube URL"],
+  };
+  const entry = cfg[p];
+  if (!entry) { el.style.display = "none"; return; }
+  el.className = "plat-pill " + entry[0];
+  el.textContent = entry[1];
+  el.style.display = "inline-flex";
+}
+
+/* ── Retry ── */
+let _lastAction = null;
+function retryLast() {
+  if (!_lastAction) return;
+  const fn = _lastAction; _lastAction = null;
+  document.getElementById("retry-btn").style.display = "none";
+  fn();
+}
+
+/* ── Quota reset countdown ── */
+function resetTimerStr() {
+  const now = new Date();
+  const mid = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1));
+  const d   = mid - now;
+  return Math.floor(d / 3600000) + "h " + Math.floor((d % 3600000) / 60000) + "m";
 }
 
 /* ── Share ── */
@@ -705,11 +759,24 @@ async function post(path, body) {
 }
 
 function setStatus(type, msg) {
-  const el = document.getElementById("status");
-  if (!type || !msg) { el.style.display = "none"; el.className = ""; return; }
+  const el    = document.getElementById("status");
+  const retry = document.getElementById("retry-btn");
+  if (!type || !msg) {
+    el.style.display = "none"; el.className = "";
+    if (retry) retry.style.display = "none";
+    return;
+  }
   el.className = "s-" + type;
   el.innerHTML = msg;
   el.style.display = "block";
+  if (type === "ok") {
+    try { tg.HapticFeedback.notificationOccurred("success"); } catch(e){}
+    if (retry) retry.style.display = "none";
+  }
+  if (type === "err") {
+    try { tg.HapticFeedback.notificationOccurred("error"); } catch(e){}
+    if (retry && _lastAction) retry.style.display = "";
+  }
 }
 
 function show(id) { document.getElementById(id).style.display = ""; }
@@ -757,7 +824,12 @@ async def handle_api_info(request: web.Request) -> web.Response:
         return _c(_ok(platform="facebook", title="Facebook Video", formats=[]))
 
     if downloader.TIKTOK_PATTERN.search(url):
-        return _c(_ok(platform="tiktok", title="TikTok Video", formats=[]))
+        try:
+            data  = await downloader.fetch_tiktok_data(url)
+            title = data.get("title") or data.get("desc") or "TikTok Video"
+        except Exception:
+            title = "TikTok Video"
+        return _c(_ok(platform="tiktok", title=title, formats=[]))
 
     return _err("TikTok / Facebook / YouTube URL မဟုတ်ပါ")
 
