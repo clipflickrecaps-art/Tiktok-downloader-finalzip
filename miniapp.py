@@ -302,6 +302,18 @@ h2{font-size:.9rem;font-weight:600;color:var(--sub);margin:16px 0 8px;
   color:var(--sub);font-size:.82rem;cursor:pointer}
 .retry-btn:active{background:#21262d}
 
+/* ── empty state hint ── */
+.empty-hint{display:flex;flex-direction:column;align-items:center;
+  padding:28px 20px 20px;gap:8px;text-align:center}
+.eh-icon{font-size:2.8rem;line-height:1}
+.eh-title{font-size:1rem;font-weight:700;color:var(--text)}
+.eh-text{font-size:.8rem;color:var(--sub);line-height:1.7}
+.eh-tag{background:#161b22;border:1px solid var(--border);border-radius:20px;
+  padding:4px 12px;font-size:.74rem;color:var(--blue);margin-top:2px}
+.dl-always{background:#0d1117;border:1.5px solid var(--border);border-radius:10px;
+  padding:10px 12px;margin-bottom:8px}
+.dl-mode-label{font-size:.72rem;color:var(--sub);margin-bottom:6px;text-align:center}
+
 /* ── share button ── */
 .share-btn{width:100%;margin-top:10px;background:linear-gradient(135deg,#0e6aa8,#1877f2);
   border:none;border-radius:10px;padding:11px;color:#fff;font-size:.88rem;
@@ -331,6 +343,27 @@ h2{font-size:.9rem;font-weight:600;color:var(--sub);margin:16px 0 8px;
     <button id="paste" onclick="pasteUrl()">📋 Clipboard မှ URL ကူးထည့်ရန်</button>
     <div id="plat-pill" style="display:none"></div>
 
+    <!-- empty state hint -->
+    <div id="empty-hint" class="empty-hint">
+      <div class="eh-icon">📥</div>
+      <div class="eh-title">Video ဒေါင်းဆွဲရန်</div>
+      <div class="eh-text">
+        TikTok · Facebook · YouTube URL ကို<br>
+        အပေါ်မှ ကူးထည့်ပြီး ↓ Download နှိပ်ပါ
+      </div>
+      <div class="eh-tag">🗂 50MB+ ဖိုင်ကြီးများ · Bot limit မရှိ · တိုက်ရိုက် ဒေါင်း</div>
+    </div>
+
+    <!-- always-visible mode selector -->
+    <div class="dl-always">
+      <div class="dl-mode-label">ဒေါင်းနည်း ရွေးပါ</div>
+      <div class="mode-row" id="mode-row">
+        <button class="mb on" id="mb-device" onclick="setMode('device')">⬇️ Device ထဲ သိမ်း</button>
+        <button class="mb"    id="mb-chat"   onclick="setMode('chat')">📨 Chat ထဲ ပို့</button>
+      </div>
+      <div class="dl-note" id="dl-note">✅ Device mode — ဖိုင်ကြီးများ (50MB+) ပါ တိုက်ရိုက် ဒေါင်းနိုင်သည်</div>
+    </div>
+
     <div id="pcard">
       <div id="pbadge" class="pbadge"></div>
       <div id="vtitle"></div>
@@ -341,12 +374,6 @@ h2{font-size:.9rem;font-weight:600;color:var(--sub);margin:16px 0 8px;
     </div>
 
     <button id="infobtn" onclick="fetchInfo()">🔍 ဗီဒီယို အချက်အလက် ရယူမည်</button>
-
-    <div class="mode-row" id="mode-row" style="display:none">
-      <button class="mb on" id="mb-device" onclick="setMode('device')">⬇️ Device ထဲ သိမ်း</button>
-      <button class="mb"    id="mb-chat"   onclick="setMode('chat')">📨 Chat ထဲ ပို့</button>
-    </div>
-    <div class="dl-note" id="dl-note" style="display:none">Browser မှတဆင့် device ထဲ တိုက်ရိုက် download ချမည်</div>
 
     <div id="acts">
       <button id="btn-v" class="act act-v" onclick="doAction('video')">
@@ -431,13 +458,25 @@ inp.addEventListener("input", onUrl);
 function onUrl() {
   const v = inp.value.trim();
   document.getElementById("clr").style.display = v ? "block" : "none";
-  hide("pcard"); hide("acts"); hide("lcard"); hide("infobtn");
-  hide("mode-row"); hide("dl-note"); hide("plat-pill");
+  hide("pcard"); hide("acts"); hide("lcard"); hide("infobtn"); hide("plat-pill");
   setStatus(""); videoInfo = null; selH = 0;
-  if (!v) return;
+  if (!v) {
+    show("empty-hint");
+    try { tg.MainButton.hide(); } catch(e){}
+    return;
+  }
+  hide("empty-hint");
   platform = detect(v);
-  if (!platform) return;
+  if (!platform) {
+    setStatus("err", "⚠️ TikTok / Facebook / YouTube URL မဟုတ်ပါ");
+    try { tg.MainButton.hide(); } catch(e){}
+    return;
+  }
   updatePlatPill(platform);
+  try {
+    tg.MainButton.setText("📥 ဒေါင်းမည်");
+    tg.MainButton.show();
+  } catch(e){}
   if (platform === "youtube") {
     show("infobtn");
   } else {
@@ -516,7 +555,7 @@ function showActions() {
   } else {
     acts.className = "act show cols2";
   }
-  show("mode-row"); show("dl-note"); show("acts");
+  show("acts");
 }
 
 /* ── Fetch YouTube info ── */
@@ -578,9 +617,33 @@ function setMode(m) {
     document.getElementById("mb-"+t).classList.toggle("on", t === m);
   });
   document.getElementById("dl-note").textContent = m === "device"
-    ? "Browser မှတဆင့် device ထဲ တိုက်ရိုက် download ချမည်"
-    : "Bot မှတဆင့် Telegram chat ထဲ ဖိုင် ပေးပို့မည်";
+    ? "✅ Device mode — ဖိုင်ကြီးများ (50MB+) ပါ တိုက်ရိုက် ဒေါင်းနိုင်သည်"
+    : "📨 Chat mode — Bot မှတဆင့် Telegram ထဲ ပေးပို့မည် (50MB ကန့်သတ်)";
 }
+
+/* ── Main Button (Telegram native) download ── */
+function mainDownload() {
+  const url = inp.value.trim();
+  if (!url) {
+    try { tg.HapticFeedback.notificationOccurred("error"); } catch(e){}
+    setStatus("err", "⚠️ URL ကူးထည့်ပါ");
+    return;
+  }
+  if (!platform) {
+    setStatus("err", "⚠️ TikTok / Facebook / YouTube URL မဟုတ်ပါ");
+    return;
+  }
+  if (platform === "youtube") {
+    if (!videoInfo) { fetchInfo(); return; }
+    doAction("video");
+  } else {
+    doAction("video");
+  }
+}
+try {
+  tg.MainButton.setText("📥 ဒေါင်းမည်");
+  tg.MainButton.onClick(mainDownload);
+} catch(e){}
 async function doAction(type) {
   _lastAction = () => doAction(type);
   if (downloadMode === "device") await doDirectDownload(type);
