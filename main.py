@@ -50,6 +50,10 @@ class BroadcastFlow(StatesGroup):
     choosing_autodelete = State()   # admin picks Yes / No for auto-delete
     waiting_ad_delay    = State()   # admin enters auto-delete delay
 
+
+class YTCookiesFlow(StatesGroup):
+    waiting_file = State()   # owner sends cookies.txt document
+
 _processing:    set = set()
 _MINI_APP_URL: str = ""   # set once at startup
 
@@ -977,6 +981,73 @@ async def listpay_handler(message: types.Message):
     if not roles.is_owner(uid):
         return await message.reply(roles.OWNER_ONLY)
     await admin.send_payment_accounts(message)
+
+
+# ─── /ytcookies — upload YouTube cookies.txt (owner only) ────────────────────
+
+@dp.message(Command("ytcookies"))
+async def ytcookies_cmd_handler(message: types.Message, state: FSMContext):
+    uid = message.from_user.id
+    if not roles.is_owner(uid):
+        return await message.reply(roles.OWNER_ONLY)
+
+    cookie_status = "✅ ရှိပြီး" if os.path.isfile(yt.YT_COOKIES_FILE) else "❌ မရှိသေး"
+    await message.reply(
+        f"🍪 <b>YouTube Cookies Setup</b>\n\n"
+        f"လက်ရှိ cookies file: {cookie_status}\n\n"
+        f"YouTube cookies.txt ဖိုင်ကို document အဖြစ် ပေးပို့ပါ။\n"
+        f"(Browser extension: <i>Get cookies.txt LOCALLY</i> သုံး၍ youtube.com cookies export လုပ်ပါ)\n\n"
+        f"⚠️ Netscape format ဖိုင်သာ အသုံးပြုနိုင်သည်။",
+        parse_mode="HTML",
+    )
+    await state.set_state(YTCookiesFlow.waiting_file)
+
+
+@dp.message(YTCookiesFlow.waiting_file, F.document)
+async def ytcookies_file_handler(message: types.Message, state: FSMContext):
+    uid = message.from_user.id
+    if not roles.is_owner(uid):
+        await state.clear()
+        return await message.reply(roles.OWNER_ONLY)
+
+    doc = message.document
+    fname = (doc.file_name or "").lower()
+    if not (fname.endswith(".txt") or fname.endswith(".cookies")):
+        return await message.reply(
+            "❌ .txt ဖိုင်သာ လက်ခံသည်။ cookies.txt ဖိုင်ကို ထပ်ပေးပို့ပါ သို့မဟုတ် /cancel နှိပ်ပါ။"
+        )
+
+    try:
+        file_info = await bot.get_file(doc.file_id)
+        file_bytes = await bot.download_file(file_info.file_path)
+        content = file_bytes.read().decode("utf-8", errors="replace")
+
+        if "# Netscape HTTP Cookie File" not in content and ".youtube.com" not in content:
+            return await message.reply(
+                "❌ ဒါ YouTube Netscape cookies file မဟုတ်ပုံပါသည်။\n"
+                "youtube.com cookies ပါသည့် ဖိုင်ကို ပေးပို့ပါ။"
+            )
+
+        with open(yt.YT_COOKIES_FILE, "w", encoding="utf-8") as f:
+            f.write(content)
+
+        await state.clear()
+        log.info(f"[YT] cookies file updated by owner uid={uid}")
+        await message.reply(
+            "✅ <b>YouTube cookies ထည့်ပြီးပြီ!</b>\n\n"
+            "ယခု YouTube ဒေါင်းလုဒ် ပြန်ကြိုးစားကြည့်ပါ။\n"
+            "Cookies သက်တမ်းကုန်လျှင် ဤ command ဖြင့် ပြန် upload လုပ်ပါ။",
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        log.error(f"[YT] cookies save error: {e}")
+        await state.clear()
+        await message.reply(f"❌ ဖိုင် သိမ်းမရပါ: {e}")
+
+
+@dp.message(YTCookiesFlow.waiting_file)
+async def ytcookies_wrong_type(message: types.Message):
+    await message.reply("❌ Document ဖိုင်သာ လက်ခံသည်။ cookies.txt ကို <b>ဖိုင် (Document)</b> အဖြစ် ပေးပို့ပါ။", parse_mode="HTML")
 
 
 @dp.message(Command("togglepay"))

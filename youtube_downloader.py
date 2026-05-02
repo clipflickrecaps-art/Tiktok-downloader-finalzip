@@ -108,21 +108,30 @@ def extract_youtube_url(text: str) -> Optional[str]:
 
 # ─── yt-dlp option builders ───────────────────────────────────────────────────
 
+YT_COOKIES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "yt_cookies.txt")
+
+
 def _yt_bypass_opts() -> dict:
-    """Common yt-dlp options that bypass YouTube bot-detection (2025+)."""
-    return {
+    """Common yt-dlp options that bypass YouTube bot-detection.
+
+    tv_embedded is less rate-limited than web/ios on datacenter IPs.
+    When yt_cookies.txt is present it is passed to yt-dlp so that
+    YouTube treats the request as an authenticated browser session —
+    this is the only reliable fix for server/datacenter IP blocks.
+    """
+    opts: dict = {
         "extractor_args": {
             "youtube": {
-                "player_client": ["ios", "web"],
+                "player_client": ["tv_embedded", "mweb"],
             }
         },
-        "http_headers": {
-            "User-Agent": (
-                "com.google.ios.youtube/19.29.1 "
-                "(iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X;)"
-            ),
-        },
     }
+    if os.path.isfile(YT_COOKIES_FILE):
+        opts["cookiefile"] = YT_COOKIES_FILE
+        log.info("[YT] Using cookies file for authentication")
+    else:
+        log.debug("[YT] No yt_cookies.txt found — requests may be blocked by YouTube")
+    return opts
 
 
 def _ydl_opts_info() -> dict:
