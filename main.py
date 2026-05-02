@@ -43,6 +43,7 @@ class FeedbackFlow(StatesGroup):
 class BroadcastFlow(StatesGroup):
     choosing_type       = State()   # admin picks text / photo / video
     waiting_content     = State()   # admin sends message content
+    previewing          = State()   # admin reviews exact preview before proceeding
     choosing_timing     = State()   # admin picks Send Now / Schedule / Repeat
     waiting_schedule    = State()   # admin enters schedule datetime/offset
     waiting_interval    = State()   # admin enters repeat interval
@@ -2353,10 +2354,73 @@ async def fsm_bc_content(message: types.Message, state: FSMContext):
         content = message.caption or ""
 
     await state.update_data(bc_content=content, bc_file_id=file_id)
-    await state.set_state(BroadcastFlow.choosing_timing)
+    await state.set_state(BroadcastFlow.previewing)
 
-    preview = f'"{content[:60]}{"…" if len(content) > 60 else ""}"' if content else "(no caption)"
+    # ── Send a live preview so admin sees exactly what users will receive ──
     await message.reply(
+        "👁 <b>Preview — Users တွေ အောက်ပါ message ကို မြင်မည်:</b>",
+        parse_mode="HTML",
+    )
+    try:
+        if bc_type == "text":
+            await message.answer(content)
+        elif bc_type == "photo":
+            await bot.send_photo(message.chat.id, photo=file_id,
+                                 caption=content or None)
+        elif bc_type == "video":
+            await bot.send_video(message.chat.id, video=file_id,
+                                 caption=content or None)
+    except Exception as _prev_err:
+        log.warning(f"[Broadcast] preview send failed: {_prev_err}")
+
+    prev_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Confirm — Schedule ဆက်လုပ်မည်",
+                              callback_data="bcprev_confirm")],
+        [InlineKeyboardButton(text="✏️ Edit — ပြန်ပြင်မည်",
+                              callback_data="bcprev_redo")],
+        [InlineKeyboardButton(text="❌ Cancel",
+                              callback_data="bcprev_cancel")],
+    ])
+    await message.answer(
+        "⬆️ <b>ဤ message ကိုပဲ user အားလုံးထံ ပေးပို့မည်</b>\n\n"
+        "Confirm မလုပ်မချင်း မပို့ပါ",
+        parse_mode="HTML",
+        reply_markup=prev_kb,
+    )
+
+
+@dp.callback_query(BroadcastFlow.previewing, F.data.startswith("bcprev_"))
+async def cb_bc_preview(call: types.CallbackQuery, state: FSMContext):
+    choice = call.data.split("_")[1]
+    await call.answer()
+
+    if choice == "cancel":
+        await state.clear()
+        return await call.message.edit_text("❌ Broadcast creation cancelled.")
+
+    if choice == "redo":
+        data    = await state.get_data()
+        bc_type = data.get("bc_type", "text")
+        if bc_type == "text":
+            prompt = "Step 2: Send the <b>text message</b> you want to broadcast."
+        elif bc_type == "photo":
+            prompt = "Step 2: Send the <b>photo</b> (with optional caption) to broadcast."
+        else:
+            prompt = "Step 2: Send the <b>video</b> (with optional caption) to broadcast."
+        await state.set_state(BroadcastFlow.waiting_content)
+        return await call.message.edit_text(
+            f"📡 <b>Create Broadcast</b>\n\n{prompt}\n\n"
+            "Send /cancelflow to cancel.",
+            parse_mode="HTML",
+        )
+
+    # choice == "confirm"
+    data    = await state.get_data()
+    bc_type = data.get("bc_type", "text")
+    content = data.get("bc_content", "")
+    preview = f'"{content[:60]}{"…" if len(content) > 60 else ""}"' if content else "(no caption)"
+    await state.set_state(BroadcastFlow.choosing_timing)
+    await call.message.edit_text(
         f"📡 <b>Create Broadcast</b>\n\n"
         f"Type:    <b>{bc_type}</b>\n"
         f"Content: {preview}\n\n"
