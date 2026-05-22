@@ -114,7 +114,7 @@ YT_COOKIES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "yt_c
 def _yt_bypass_opts() -> dict:
     """Common yt-dlp options that bypass YouTube bot-detection.
 
-    tv_embedded is less rate-limited than web/ios on datacenter IPs.
+    android_vr gives the most formats on datacenter IPs; android is the fallback.
     When yt_cookies.txt is present it is passed to yt-dlp so that
     YouTube treats the request as an authenticated browser session —
     this is the only reliable fix for server/datacenter IP blocks.
@@ -122,7 +122,7 @@ def _yt_bypass_opts() -> dict:
     opts: dict = {
         "extractor_args": {
             "youtube": {
-                "player_client": ["tv_embedded", "mweb"],
+                "player_client": ["android_vr", "android"],
             }
         },
     }
