@@ -4,11 +4,11 @@ This project runs a Telegram bot and a Telegram Mini App for downloading support
 
 ## Requirements
 
-Python 3.11 or newer is required. `ffmpeg` is recommended for audio extraction and YouTube format merging.
+Python 3.11 or newer is required. `ffmpeg` is recommended for audio extraction and YouTube format merging. Current yt-dlp YouTube extraction also uses Node.js 22 or newer for JavaScript challenge solving.
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y python3-venv ffmpeg
+sudo apt-get install -y python3-venv ffmpeg nodejs
 python3 -m venv .venv
 . .venv/bin/activate
 pip install -r requirements.txt

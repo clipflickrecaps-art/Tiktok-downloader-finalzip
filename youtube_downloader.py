@@ -126,6 +126,11 @@ def _yt_bypass_opts() -> dict:
             }
         },
     }
+    # yt-dlp 2026+ requires an external JS runtime for YouTube challenges.
+    # Node 22+ is supported; deployments without Node will fall back to the
+    # provider error message instead of crashing the bot.
+    if shutil.which("node"):
+        opts["js_runtimes"] = {"node": {}}
     if os.path.isfile(YT_COOKIES_FILE):
         opts["cookiefile"] = YT_COOKIES_FILE
         log.info("[YT] Using cookies file for authentication")
@@ -165,7 +170,8 @@ def _ydl_opts_download(format_str: str, outtmpl: str) -> dict:
 def _fetch_info_sync(url: str) -> YTVideoInfo:
     try:
         with yt_dlp.YoutubeDL(_ydl_opts_info()) as ydl:
-            info = ydl.extract_info(url, download=False)
+            # Do not force a default playable format during metadata lookup.
+            info = ydl.extract_info(url, download=False, process=False)
     except Exception as e:
         log.error(f"[YT] info fetch error for {url}: {e}")
         return YTVideoInfo(ok=False, error_msg=str(e))
