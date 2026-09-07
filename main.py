@@ -224,11 +224,11 @@ def _main_reply_kb() -> ReplyKeyboardMarkup:
          KeyboardButton(text="🏠 Main Menu")],
         [KeyboardButton(text="⭐ Premium / VIP")],
     ]
-    if _REPLIT_DOMAIN:
+    if _ACTIVE_DOMAIN:
         rows.append([
             KeyboardButton(
                 text="📱 Video Downloader App",
-                web_app=WebAppInfo(url=f"https://{_REPLIT_DOMAIN}/app"),
+                web_app=WebAppInfo(url=f"https://{_ACTIVE_DOMAIN}/app"),
             )
         ])
     return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True, is_persistent=True)
@@ -3621,8 +3621,19 @@ async def non_tiktok_url_handler(message: types.Message):
 #   This completely eliminates TelegramConflictError from simultaneous polling.
 # • Truly local (no REPLIT_DOMAINS): polling mode.
 #
-_REPLIT_DOMAIN = os.environ.get("REPLIT_DOMAINS", "").split(",")[0].strip()
-_USE_WEBHOOK   = bool(_REPLIT_DOMAIN)
+def _normalise_public_domain(value: str) -> str:
+    value = (value or "").strip().split(",")[0].strip()
+    return value.removeprefix("https://").removeprefix("http://").rstrip("/")
+
+
+# On a VPS, DOMAIN/PUBLIC_DOMAIN must win over any stale Replit variables.
+# Replit remains supported as a fallback when no explicit public domain exists.
+_PUBLIC_DOMAIN = _normalise_public_domain(
+    os.environ.get("DOMAIN") or os.environ.get("PUBLIC_DOMAIN")
+)
+_REPLIT_DOMAIN = _normalise_public_domain(os.environ.get("REPLIT_DOMAINS", ""))
+_ACTIVE_DOMAIN = _PUBLIC_DOMAIN or _REPLIT_DOMAIN
+_USE_WEBHOOK   = bool(_ACTIVE_DOMAIN)
 _IS_DEPLOYED   = os.environ.get("REPLIT_DEPLOYMENT", "0") == "1"
 
 
@@ -3800,7 +3811,7 @@ async def main():
     mode = f"WEBHOOK ({'deployed' if _IS_DEPLOYED else 'dev'})" if _USE_WEBHOOK else "POLLING"
     log.info(f"Bot starting in {mode} mode...")
     if _USE_WEBHOOK:
-        await _run_webhook(_REPLIT_DOMAIN)
+        await _run_webhook(_ACTIVE_DOMAIN)
     else:
         await _run_polling()
 
