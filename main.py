@@ -909,10 +909,10 @@ async def sysset_handler(message: types.Message, command: CommandObject):
         return await message.reply(roles.OWNER_ONLY)
 
     args  = (command.args or "").strip().split()
-    usage = "⚙️ Usage: /sysset &lt;feature&gt; on|off\n\nFeature keys:\n"
+    usage = "⚙️ Usage: /sysset &lt;feature&gt; on|off [force]\n\nFeature keys:\n"
     usage += "\n".join(f"  <code>{k.replace('_enabled','')}</code>" for k in st.FLAG_DEFAULTS)
 
-    if len(args) != 2 or args[1] not in ("on", "off"):
+    if len(args) not in (2, 3) or args[1] not in ("on", "off") or (len(args) == 3 and args[2] != "force"):
         return await message.reply(usage, parse_mode="HTML")
 
     feature_key = args[0].strip().lower()
@@ -925,10 +925,11 @@ async def sysset_handler(message: types.Message, command: CommandObject):
         )
 
     enabling     = args[1] == "on"
+    force_enable = len(args) == 3 and args[2] == "force"
     user_count   = db.get_total_users()
     feature_stat = st.get_feature_status(feature_key, user_count)
 
-    if enabling and feature_stat["status"] == "locked":
+    if enabling and feature_stat["status"] == "locked" and not force_enable:
         threshold = feature_stat["threshold"]
         needed    = max(0, threshold - user_count)
         log.warning(f"Admin {uid} tried to enable locked feature '{feature_key}' "
@@ -943,7 +944,7 @@ async def sysset_handler(message: types.Message, command: CommandObject):
 
     st.set_flag(feature_key, enabling, changed_by=uid)
     state = "✅ Enabled" if enabling else "⬜ Disabled"
-    log.info(f"/sysset: '{feature_key}' set to {enabling} by owner {uid}")
+    log.info(f"/sysset: '{feature_key}' set to {enabling} by owner {uid} force={force_enable}")
     await message.reply(
         f"⚙️ <b>{feature_stat['label']}</b>\n"
         f"Status: {state}",
