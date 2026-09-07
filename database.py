@@ -554,6 +554,29 @@ def increment_yt_daily(user_id: int) -> None:
         log.error(f"increment_yt_daily failed for {user_id}: {e}")
 
 
+def consume_yt_daily(user_id: int, limit: int) -> bool:
+    """Atomically consume one YouTube slot when the daily limit allows it."""
+    today = datetime.now(timezone.utc).date().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        with _connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO yt_daily_usage (user_id, date, yt_count, ad_unlocked, updated_at)
+                VALUES (?, ?, 1, 0, ?)
+                ON CONFLICT(user_id, date) DO UPDATE SET
+                    yt_count = yt_count + 1,
+                    updated_at = excluded.updated_at
+                WHERE yt_count < ?
+                """,
+                (int(user_id), today, now, int(limit)),
+            )
+            return conn.execute("SELECT changes()").fetchone()[0] == 1
+    except Exception as e:
+        log.error(f"consume_yt_daily failed for {user_id}: {type(e).__name__}: {e}")
+        return False
+
+
 def grant_yt_ad_unlock(user_id: int) -> None:
     """Mark that the user has used their ad-unlock for YouTube today."""
     today = datetime.now(timezone.utc).date().isoformat()

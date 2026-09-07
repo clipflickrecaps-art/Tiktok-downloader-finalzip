@@ -46,6 +46,23 @@ class CoreTests(unittest.TestCase):
         self.assertIsNone(miniapp._parse_download_args({"platform": "youtube", "type": "video", "height": "bad"}))
         self.assertIsNone(miniapp._parse_download_args({"platform": "unknown", "type": "video", "height": 0}))
 
+    def test_miniapp_job_limit(self):
+        import miniapp
+        miniapp._active_jobs.clear()
+        self.assertTrue(miniapp._start_job(77))
+        self.assertFalse(miniapp._start_job(77))
+        miniapp._finish_job(77)
+        self.assertTrue(miniapp._start_job(77))
+        miniapp._finish_job(77)
+
+    def test_atomic_youtube_quota(self):
+        import database
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.object(database, "DB_FILE", str(Path(tmp) / "bot.db")):
+                database.init_db()
+                self.assertTrue(database.consume_yt_daily(5, 1))
+                self.assertFalse(database.consume_yt_daily(5, 1))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -348,7 +348,7 @@ def get_direct_url_sync(url: str, height: int = 0) -> tuple:
         if stream_url:
             h = info.get("height") or height or 0
             note = f"{h}p" if h else "best"
-            log.info(f"[YT] direct URL extracted ({note}): {stream_url[:80]}…")
+            log.info(f"[YT] direct URL extracted ({note})")
             return stream_url, note
 
         # Fall back: walk formats list, pick highest-quality with a URL
@@ -365,7 +365,7 @@ def get_direct_url_sync(url: str, height: int = 0) -> tuple:
             best = candidates[0]
             h = best.get("height") or 0
             note = f"{h}p" if h else best.get("format_id", "best")
-            log.info(f"[YT] direct URL from formats ({note}): {best['url'][:80]}…")
+            log.info(f"[YT] direct URL from formats ({note})")
             return best["url"], note
 
         return None, "No direct URL in yt-dlp response"

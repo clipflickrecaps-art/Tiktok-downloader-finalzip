@@ -53,6 +53,8 @@ _DL_DIRECT_MAX = 100   # MB cap for direct device download; larger → CDN link
 _RATE_WINDOW = 60
 _RATE_LIMIT = 12
 _rate_hits: dict[int, list[float]] = {}
+_active_jobs: dict[int, int] = {}
+_MAX_JOBS_PER_USER = 1
 _ALLOWED_PLATFORMS = {"tiktok", "facebook", "youtube"}
 _ALLOWED_TYPES = {"video", "audio", "thumb"}
 
@@ -65,6 +67,7 @@ def init(bot, bot_token: str, domain: str, bot_username: str = "") -> None:
     _bot_username = bot_username
     _sem          = asyncio.Semaphore(4)
     downloader.cleanup_stale_files()
+    asyncio.create_task(_cleanup_loop())
     log.info(f"[MiniApp] initialised — https://{domain}/app")
 
 
@@ -126,6 +129,28 @@ def _allow_request(uid: int) -> bool:
     hits.append(now)
     _rate_hits[uid] = hits
     return True
+
+
+def _start_job(uid: int) -> bool:
+    count = _active_jobs.get(uid, 0)
+    if count >= _MAX_JOBS_PER_USER:
+        return False
+    _active_jobs[uid] = count + 1
+    return True
+
+
+def _finish_job(uid: int) -> None:
+    count = _active_jobs.get(uid, 0) - 1
+    if count > 0:
+        _active_jobs[uid] = count
+    else:
+        _active_jobs.pop(uid, None)
+
+
+async def _cleanup_loop() -> None:
+    while True:
+        await asyncio.sleep(900)
+        downloader.cleanup_stale_files()
 
 
 def _parse_download_args(body: dict) -> tuple[str, str, int] | None:
@@ -1044,7 +1069,10 @@ async def handle_api_dl(request: web.Request) -> web.Response:
         return _err("⛔ Bot အသုံးပြုခွင့် ပိတ်ထားသည်")
     if not _allow_request(uid):
         return _err("ခဏစောင့်ပြီး ထပ်ကြိုးစားပါ", 429)
+    if not _start_job(uid):
+        return _err("ဤ user အတွက် download တစ်ခု လုပ်ဆောင်နေပြီးသားပါ", 429)
     if not url:
+        _finish_job(uid)
         return _err("URL required")
 
     # Auto-detect platform
@@ -1052,9 +1080,16 @@ async def handle_api_dl(request: web.Request) -> web.Response:
         if yt.is_youtube_url(url):         platform = "youtube"
         elif fb.is_facebook_url(url):      platform = "facebook"
         elif downloader.TIKTOK_PATTERN.search(url): platform = "tiktok"
-        else: return _err("URL ပံ့ပိုးမထားပါ")
+        else:
+            _finish_job(uid)
+            return _err("URL ပံ့ပိုးမထားပါ")
 
-    asyncio.create_task(_dispatch(uid, url, platform, height, dl_type))
+    async def run_job():
+        try:
+            await _dispatch(uid, url, platform, height, dl_type)
+        finally:
+            _finish_job(uid)
+    asyncio.create_task(run_job())
     return _c(_ok(message="ဒေါင်းနေသည်… Telegram chat ထဲ မကြာမီ ပေးပို့မည်"))
 
 
@@ -1071,6 +1106,10 @@ async def handle_api_history(request: web.Request) -> web.Response:
     uid = user.get("id")
     if not uid:
         return _err("User ID missing", 401)
+    if db.is_banned(uid):
+        return _err("⛔ Bot အသုံးပြုခွင့် ပိတ်ထားသည်", 403)
+    if not _allow_request(uid):
+        return _err("ခဏစောင့်ပြီး ထပ်ကြိုးစားပါ", 429)
 
     items = await asyncio.get_event_loop().run_in_executor(None, _user_history, uid)
     return _c(_ok(items=items))
@@ -1089,6 +1128,10 @@ async def handle_api_profile(request: web.Request) -> web.Response:
     uid = user.get("id")
     if not uid:
         return _err("User ID missing", 401)
+    if db.is_banned(uid):
+        return _err("⛔ Bot အသုံးပြုခွင့် ပိတ်ထားသည်", 403)
+    if not _allow_request(uid):
+        return _err("ခဏစောင့်ပြီး ထပ်ကြိုးစားပါ", 429)
 
     def _build():
         row       = db.get_user(uid)
@@ -1243,21 +1286,27 @@ async def handle_api_dl_direct(request: web.Request) -> web.Response:
         return _err("⛔ Bot အသုံးပြုခွင့် ပိတ်ထားသည်")
     if not _allow_request(uid):
         return _err("ခဏစောင့်ပြီး ထပ်ကြိုးစားပါ", 429)
+    if not _start_job(uid):
+        return _err("ဤ user အတွက် download တစ်ခု လုပ်ဆောင်နေပြီးသားပါ", 429)
 
     url      = (body.get("url") or "").strip()
     parsed_args = _parse_download_args(body)
     if parsed_args is None:
+        _finish_job(uid)
         return _err("Invalid platform, type, or height")
     platform, dl_type, height = parsed_args
 
     if not url:
+        _finish_job(uid)
         return _err("URL required")
 
     if not platform:
         if yt.is_youtube_url(url):              platform = "youtube"
         elif fb.is_facebook_url(url):           platform = "facebook"
         elif downloader.TIKTOK_PATTERN.search(url): platform = "tiktok"
-        else: return _err("URL ပံ့ပိုးမထားပါ")
+        else:
+            _finish_job(uid)
+            return _err("URL ပံ့ပိုးမထားပါ")
 
     _purge_tokens()
     assert _sem is not None
@@ -1270,10 +1319,13 @@ async def handle_api_dl_direct(request: web.Request) -> web.Response:
         except asyncio.TimeoutError:
             return _err("ဒေါင်းချိန် ကုန်ဆုံး — ထပ်ကြိုးစားပါ")
         except ValueError as e:
-            return _err(str(e))
+            log.warning(f"[MiniApp] dl-direct rejected: {type(e).__name__}")
+            return _err("ဒေါင်းမရပါ — တောင်းဆိုချက်ကို စစ်ဆေးပါ")
         except Exception as e:
-            log.error(f"[MiniApp] dl-direct uid={uid}: {e}")
-            return _err(f"ဒေါင်းမရပါ — {e}")
+            log.error(f"[MiniApp] dl-direct uid={uid}: {type(e).__name__}: {e}")
+            return _err("ဒေါင်းမရပါ — နောက်မှ ထပ်ကြိုးစားပါ")
+        finally:
+            _finish_job(uid)
 
     if cdn_url:
         db.log_download(uid, url, "direct_link", "success")
@@ -1343,9 +1395,9 @@ async def _dispatch(uid: int, url: str, platform: str, height: int, dl_type: str
                 else:
                     await _dl_youtube(uid, url, height)
         except Exception as exc:
-            log.error(f"[MiniApp] dispatch error uid={uid}: {exc}")
+            log.error(f"[MiniApp] dispatch error uid={uid}: {type(exc).__name__}: {exc}")
             try:
-                await _bot.send_message(uid, f"❌ ဒေါင်းမရပါ — {exc}")
+                await _bot.send_message(uid, "❌ ဒေါင်းမရပါ — နောက်မှ ထပ်ကြိုးစားပါ")
             except Exception:
                 pass
 

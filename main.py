@@ -3100,9 +3100,10 @@ async def cb_yt_resolution(call: types.CallbackQuery):
         )])
         lower_kb = InlineKeyboardMarkup(inline_keyboard=lower_rows)
 
+        if not is_vip and not db.consume_yt_daily(uid, YT_FREE_DAILY + (1 if db.get_yt_ad_unlocked(uid) else 0)):
+            return await call.message.edit_text("⚠️ YouTube daily limit ပြည့်သွားပါပြီ။")
         db.log_download(uid, url, "youtube_video", "success", "direct_link")
         _trigger_referral_validation(uid)
-        db.increment_yt_daily(uid)
         st.increment_usage(uid)
 
         if stream_url:
@@ -3233,9 +3234,10 @@ async def cb_yt_resolution(call: types.CallbackQuery):
         except Exception:
             pass
 
+        if not is_vip and not db.consume_yt_daily(uid, YT_FREE_DAILY + (1 if db.get_yt_ad_unlocked(uid) else 0)):
+            return await call.message.edit_text("⚠️ YouTube daily limit ပြည့်သွားပါပြီ။")
         db.log_download(uid, url, "youtube_video", "success")
         _trigger_referral_validation(uid)
-        db.increment_yt_daily(uid)
         st.increment_usage(uid)
 
     except Exception as exc:
