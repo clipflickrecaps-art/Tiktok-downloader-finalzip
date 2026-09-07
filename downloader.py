@@ -130,6 +130,9 @@ async def fetch_tiktok_data(url: str) -> dict:
                 params={"url": url},
                 timeout=aiohttp.ClientTimeout(total=15)
             ) as response:
+                if response.status == 429:
+                    log.warning(f"TikTok API rate limited for: {url}")
+                    raise DownloadError("rate_limited", "Provider rate limit")
                 if response.status != 200:
                     log.error(f"API HTTP {response.status} for: {url}")
                     raise DownloadError("api_error", f"HTTP {response.status}")
@@ -149,9 +152,15 @@ async def fetch_tiktok_data(url: str) -> dict:
         log.error(f"Unexpected network error for {url}: {e}")
         raise DownloadError("api_error", str(e))
 
+    if not isinstance(res, dict):
+        log.error(f"TikTok API returned non-object response for: {url}")
+        raise DownloadError("malformed_response", "Invalid API response")
     code = res.get("code")
     msg = str(res.get("msg", "")).lower()
     data = res.get("data")
+    if data is not None and not isinstance(data, dict):
+        log.error(f"TikTok API returned invalid data type for: {url}")
+        raise DownloadError("malformed_response", "Invalid API data")
 
     if not data or code == -1:
         log.warning(f"API no-data response for {url} — code={code} msg={msg}")
@@ -169,6 +178,8 @@ async def fetch_tiktok_data(url: str) -> dict:
     if content_type == "video" and not data.get("play"):
         log.warning(f"Missing play URL in video response for: {url}")
         raise DownloadError("missing_url", "No play URL")
+    if content_type == "video" and not re.match(r"^https?://", str(data.get("play", ""))):
+        raise DownloadError("missing_url", "Invalid play URL")
 
     return data
 

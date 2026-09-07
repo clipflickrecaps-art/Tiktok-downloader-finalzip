@@ -63,6 +63,13 @@ class CoreTests(unittest.TestCase):
                 self.assertTrue(database.consume_yt_daily(5, 1))
                 self.assertFalse(database.consume_yt_daily(5, 1))
 
+    def test_miniapp_origin_and_token_policy(self):
+        import miniapp
+        with patch.dict(os.environ, {"MINIAPP_ORIGIN": "https://app.example.com"}):
+            self.assertEqual(miniapp._cors_origin(), "https://app.example.com")
+        self.assertTrue(miniapp._TOKEN_RE.fullmatch("a" * 24 + ".mp4"))
+        self.assertFalse(miniapp._TOKEN_RE.fullmatch("../secret.mp4"))
+
 
 if __name__ == "__main__":
     unittest.main()

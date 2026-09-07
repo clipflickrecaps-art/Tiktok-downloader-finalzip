@@ -21,6 +21,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import shutil
 import time
 import urllib.parse
@@ -57,6 +58,14 @@ _active_jobs: dict[int, int] = {}
 _MAX_JOBS_PER_USER = 1
 _ALLOWED_PLATFORMS = {"tiktok", "facebook", "youtube"}
 _ALLOWED_TYPES = {"video", "audio", "thumb"}
+_TOKEN_RE = re.compile(r"^[a-f0-9]{24}\.[A-Za-z0-9]{1,8}$")
+
+
+def _cors_origin() -> str:
+    explicit = os.environ.get("MINIAPP_ORIGIN", "").strip().rstrip("/")
+    if explicit:
+        return explicit
+    return f"https://{_domain}" if _domain else ""
 
 
 def init(bot, bot_token: str, domain: str, bot_username: str = "") -> None:
@@ -116,7 +125,10 @@ def _ok(**kw):  return web.json_response({"ok": True,  **kw})
 def _err(m, s=400): return web.json_response({"ok": False, "error": m}, status=s)
 
 def _c(r):
-    r.headers["Access-Control-Allow-Origin"] = "*"
+    origin = _cors_origin()
+    if origin:
+        r.headers["Access-Control-Allow-Origin"] = origin
+        r.headers["Vary"] = "Origin"
     return r
 
 
@@ -150,6 +162,14 @@ def _finish_job(uid: int) -> None:
 async def _cleanup_loop() -> None:
     while True:
         await asyncio.sleep(900)
+        now = time.time()
+        for uid, hits in list(_rate_hits.items()):
+            fresh = [stamp for stamp in hits if now - stamp < _RATE_WINDOW]
+            if fresh:
+                _rate_hits[uid] = fresh
+            else:
+                _rate_hits.pop(uid, None)
+        _purge_tokens()
         downloader.cleanup_stale_files()
 
 
@@ -699,8 +719,8 @@ async function doDownload(type) {
     if (!r.ok) throw new Error(r.error);
     if (r.link) {
       _sharedLink = r.link;
-      document.getElementById("lanchor").innerHTML =
-        '<a href="' + r.link + '" target="_blank">⬇️ ဒေါင်းရန် ဤနေရာနှိပ်ပါ</a>';
+      if (!setSafeDownloadLink(r.link, "⬇️ ဒေါင်းရန် ဤနေရာနှိပ်ပါ"))
+        throw new Error("မလုံခြုံသော download link ဖြစ်နေပါသည်");
       document.getElementById("share-link-btn").style.display = "";
       show("lcard");
       setStatus("ok", "✅ CDN link ရရှိပြီ — Browser ဖြင့် Save လုပ်ပါ");
@@ -768,8 +788,8 @@ async function doDirectDownload(type) {
     if (!r.ok) throw new Error(r.error);
     if (r.link) {
       _sharedLink = r.link;
-      document.getElementById("lanchor").innerHTML =
-        '<a href="' + r.link + '" target="_blank">⬇️ CDN Link — ဒေါင်းရန် နှိပ်ပါ</a>';
+      if (!setSafeDownloadLink(r.link, "⬇️ CDN Link — ဒေါင်းရန် နှိပ်ပါ"))
+        throw new Error("မလုံခြုံသော download link ဖြစ်နေပါသည်");
       document.getElementById("share-link-btn").style.display = "";
       show("lcard");
       setStatus("ok", "✅ ဖိုင်ကြီးသဖြင့် CDN link ရရှိပြီ — Browser ဖြင့် Save လုပ်ပါ");
@@ -985,6 +1005,21 @@ function setStatus(type, msg) {
 function show(id) { document.getElementById(id).style.display = ""; }
 function hide(id) { document.getElementById(id).style.display = "none"; }
 function esc(s)   { return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+function safeHttpUrl(raw) {
+  try {
+    const u = new URL(String(raw), window.location.origin);
+    return ["http:", "https:"].includes(u.protocol) ? u.href : null;
+  } catch (_) { return null; }
+}
+function setSafeDownloadLink(raw, label) {
+  const href = safeHttpUrl(raw);
+  const host = document.getElementById("lanchor");
+  host.replaceChildren();
+  if (!href) return false;
+  const a = document.createElement("a");
+  a.href = href; a.target = "_blank"; a.rel = "noopener noreferrer";
+  a.textContent = label; host.appendChild(a); return true;
+}
 </script>
 </body>
 </html>
@@ -1341,11 +1376,20 @@ async def handle_api_dl_direct(request: web.Request) -> web.Response:
 
 async def handle_files(request: web.Request) -> web.StreamResponse:
     token = request.match_info["token"]
-    entry = _dl_tokens.pop(token, None)
+    if not _TOKEN_RE.fullmatch(token):
+        raise web.HTTPNotFound(text="File expired or not found")
+    _purge_tokens()
+    entry = _dl_tokens.get(token)
     if not entry:
         raise web.HTTPNotFound(text="File expired or not found")
     filepath, _ = entry
-    if not os.path.exists(filepath):
+    temp_root = os.path.realpath(downloader.TEMP_DIR)
+    safe_path = os.path.realpath(filepath)
+    if os.path.commonpath((temp_root, safe_path)) != temp_root:
+        _dl_tokens.pop(token, None)
+        raise web.HTTPNotFound(text="File expired or not found")
+    if not os.path.isfile(safe_path):
+        _dl_tokens.pop(token, None)
         raise web.HTTPGone(text="File gone")
 
     ext  = os.path.splitext(token)[1].lstrip(".").lower()
@@ -1353,24 +1397,31 @@ async def handle_files(request: web.Request) -> web.StreamResponse:
             "webm": "video/webm", "jpg": "image/jpeg", "jpeg": "image/jpeg",
             "png": "image/png", "opus": "audio/ogg"}
     ctype = cmap.get(ext, "application/octet-stream")
-    size  = os.path.getsize(filepath)
-    fname = os.path.basename(filepath)
+    size  = os.path.getsize(safe_path)
+    fname = os.path.basename(safe_path)
 
     resp = web.StreamResponse(headers={
         "Content-Disposition": f'attachment; filename="{fname}"',
         "Content-Type":        ctype,
         "Content-Length":      str(size),
         "Cache-Control":       "no-store",
-        "Access-Control-Allow-Origin": "*",
     })
+    origin = _cors_origin()
+    if origin:
+        resp.headers["Access-Control-Allow-Origin"] = origin
+        resp.headers["Vary"] = "Origin"
     await resp.prepare(request)
     try:
-        with open(filepath, "rb") as f:
+        with open(safe_path, "rb") as f:
             while chunk := f.read(65536):
                 await resp.write(chunk)
         await resp.write_eof()
+        _dl_tokens.pop(token, None)
     finally:
-        downloader.cleanup_file(filepath)
+        # Keep the token/file after a broken connection so the client can retry
+        # until TTL expiry; successful delivery removes both immediately.
+        if token not in _dl_tokens:
+            downloader.cleanup_file(safe_path)
     return resp
 
 
