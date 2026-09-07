@@ -50,6 +50,11 @@ _sem: asyncio.Semaphore | None = None
 _dl_tokens: dict[str, tuple[str, float]] = {}
 _DL_TOKEN_TTL  = 600   # seconds tokens are valid
 _DL_DIRECT_MAX = 100   # MB cap for direct device download; larger → CDN link
+_RATE_WINDOW = 60
+_RATE_LIMIT = 12
+_rate_hits: dict[int, list[float]] = {}
+_ALLOWED_PLATFORMS = {"tiktok", "facebook", "youtube"}
+_ALLOWED_TYPES = {"video", "audio", "thumb"}
 
 
 def init(bot, bot_token: str, domain: str, bot_username: str = "") -> None:
@@ -59,6 +64,7 @@ def init(bot, bot_token: str, domain: str, bot_username: str = "") -> None:
     _domain       = domain
     _bot_username = bot_username
     _sem          = asyncio.Semaphore(4)
+    downloader.cleanup_stale_files()
     log.info(f"[MiniApp] initialised — https://{domain}/app")
 
 
@@ -92,6 +98,9 @@ def _parse_init_data(raw: str) -> dict | None:
         want  = hmac.new(key, check.encode(), hashlib.sha256).hexdigest()
         if not hmac.compare_digest(want, got):
             return None
+        auth_date = int(params.get("auth_date", "0"))
+        if not auth_date or time.time() - auth_date > 86400:
+            return None
         return json.loads(params.get("user", "{}"))
     except Exception as e:
         log.warning(f"[MiniApp] initData error: {e}")
@@ -106,6 +115,31 @@ def _err(m, s=400): return web.json_response({"ok": False, "error": m}, status=s
 def _c(r):
     r.headers["Access-Control-Allow-Origin"] = "*"
     return r
+
+
+def _allow_request(uid: int) -> bool:
+    now = time.time()
+    hits = [t for t in _rate_hits.get(uid, []) if now - t < _RATE_WINDOW]
+    if len(hits) >= _RATE_LIMIT:
+        _rate_hits[uid] = hits
+        return False
+    hits.append(now)
+    _rate_hits[uid] = hits
+    return True
+
+
+def _parse_download_args(body: dict) -> tuple[str, str, int] | None:
+    platform = (body.get("platform") or "").strip().lower()
+    dl_type = (body.get("type") or "video").strip().lower()
+    if (platform and platform not in _ALLOWED_PLATFORMS) or dl_type not in _ALLOWED_TYPES:
+        return None
+    try:
+        height = int(body.get("height") or 0)
+    except (TypeError, ValueError):
+        return None
+    if height < 0 or height > 2160:
+        return None
+    return platform, dl_type, height
 
 
 def _user_history(uid: int, limit: int = 20) -> list[dict]:
@@ -949,6 +983,14 @@ async def handle_api_info(request: web.Request) -> web.Response:
     if user is None:
         return _err("Telegram auth failed", 401)
 
+    info_uid = user.get("id")
+    if not info_uid:
+        return _err("User ID missing", 401)
+    if db.is_banned(info_uid):
+        return _err("⛔ Bot အသုံးပြုခွင့် ပိတ်ထားသည်", 403)
+    if not _allow_request(info_uid):
+        return _err("ခဏစောင့်ပြီး ထပ်ကြိုးစားပါ", 429)
+
     url = (body.get("url") or "").strip()
     if not url:
         return _err("URL required")
@@ -991,14 +1033,17 @@ async def handle_api_dl(request: web.Request) -> web.Response:
 
     uid      = user.get("id")
     url      = (body.get("url") or "").strip()
-    platform = (body.get("platform") or "").strip()
-    height   = int(body.get("height") or 0)
-    dl_type  = (body.get("type") or "video").strip()   # video | audio | thumb
+    parsed_args = _parse_download_args(body)
+    if parsed_args is None:
+        return _err("Invalid platform, type, or height")
+    platform, dl_type, height = parsed_args
 
     if not uid:
         return _err("User ID missing", 401)
     if db.is_banned(uid):
         return _err("⛔ Bot အသုံးပြုခွင့် ပိတ်ထားသည်")
+    if not _allow_request(uid):
+        return _err("ခဏစောင့်ပြီး ထပ်ကြိုးစားပါ", 429)
     if not url:
         return _err("URL required")
 
@@ -1196,11 +1241,14 @@ async def handle_api_dl_direct(request: web.Request) -> web.Response:
         return _err("User ID missing", 401)
     if db.is_banned(uid):
         return _err("⛔ Bot အသုံးပြုခွင့် ပိတ်ထားသည်")
+    if not _allow_request(uid):
+        return _err("ခဏစောင့်ပြီး ထပ်ကြိုးစားပါ", 429)
 
     url      = (body.get("url") or "").strip()
-    platform = (body.get("platform") or "").strip()
-    height   = int(body.get("height") or 0)
-    dl_type  = (body.get("type") or "video").strip()
+    parsed_args = _parse_download_args(body)
+    if parsed_args is None:
+        return _err("Invalid platform, type, or height")
+    platform, dl_type, height = parsed_args
 
     if not url:
         return _err("URL required")

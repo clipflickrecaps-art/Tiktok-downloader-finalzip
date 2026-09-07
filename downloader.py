@@ -1,11 +1,13 @@
 import re
 import os
 import asyncio
+import time
 import aiohttp
 from logger import log
 
 TEMP_DIR = "temp_media"
 os.makedirs(TEMP_DIR, exist_ok=True)
+MAX_DOWNLOAD_BYTES = int(os.environ.get("MAX_DOWNLOAD_MB", "100")) * 1024 * 1024
 
 TIKTOK_PATTERN = re.compile(
     r'https?://(?:www\.|vm\.|vt\.|m\.)?tiktok\.com/\S+'
@@ -22,6 +24,7 @@ USER_MESSAGES = {
     "missing_url":        "⚠️ ဗီဒီယို URL ရှာမတွေ့ပါ။ နောက်မှ ထပ်ကြိုးစားပါ။",
     "malformed_response": "⚠️ Server မှ မမှန်ကန်သော တုံ့ပြန်မှုရရှိသည်။ နောက်မှ ထပ်ကြိုးစားပါ။",
     "download_failed":    "⚠️ ဗီဒီယိုဒေါင်းမရပါ။ နောက်မှ ထပ်ကြိုးစားပါ။",
+    "file_too_large":     "⚠️ ဖိုင်အရွယ်အစားက သတ်မှတ်ထားသော limit ထက်ကြီးနေပါသည်။",
     "image_failed":       "❌ Image ဒေါင်းမရပါ။ နောက်မှ ထပ်ကြိုးစားပါ။",
     "live_photo_failed":  "❌ Live Photo ဒေါင်းမရပါ။ နောက်မှ ထပ်ကြိုးစားပါ။",
 }
@@ -182,15 +185,24 @@ async def download_to_file(url: str, filepath: str) -> int:
                 if resp.status != 200:
                     log.error(f"Media download HTTP {resp.status} for: {url}")
                     raise DownloadError("download_failed", f"HTTP {resp.status}")
+                content_length = resp.headers.get("Content-Length")
+                if content_length and int(content_length) > MAX_DOWNLOAD_BYTES:
+                    raise DownloadError("file_too_large", "Download exceeds configured size limit")
+                total = 0
                 with open(filepath, "wb") as f:
                     async for chunk in resp.content.iter_chunked(1024 * 64):
+                        total += len(chunk)
+                        if total > MAX_DOWNLOAD_BYTES:
+                            raise DownloadError("file_too_large", "Download exceeds configured size limit")
                         f.write(chunk)
     except asyncio.TimeoutError:
         log.error(f"Media download timed out: {url}")
         raise DownloadError("timeout", "Download timed out")
     except DownloadError:
+        cleanup_file(filepath)
         raise
     except Exception as e:
+        cleanup_file(filepath)
         log.error(f"Unexpected error downloading media: {e}")
         raise DownloadError("download_failed", str(e))
 
@@ -213,6 +225,23 @@ def cleanup_files(paths) -> None:
     for p in paths:
         if p:
             cleanup_file(p)
+
+
+def cleanup_stale_files(max_age_seconds: int = 3600) -> int:
+    """Delete abandoned files left in temp_media after a crash or restart."""
+    now = time.time()
+    removed = 0
+    for name in os.listdir(TEMP_DIR):
+        path = os.path.join(TEMP_DIR, name)
+        try:
+            if os.path.isfile(path) and now - os.path.getmtime(path) > max_age_seconds:
+                os.remove(path)
+                removed += 1
+        except OSError:
+            continue
+    if removed:
+        log.info("Removed %d stale temporary media file(s)", removed)
+    return removed
 
 
 _IMAGE_HEADERS = {

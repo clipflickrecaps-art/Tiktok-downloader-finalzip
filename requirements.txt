@@ -1,9 +1,5 @@
 aiogram==3.3.0
-requests
-aiohttp
-flask
-aiogram==3.3.0
-aiohttp
-flask
-requests
-yt-dlp
+aiohttp==3.9.5
+Flask==3.0.3
+requests==2.32.3
+yt-dlp==2025.1.26

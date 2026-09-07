@@ -3785,6 +3785,7 @@ async def _referral_cleanup_loop() -> None:
 
 
 async def main():
+    downloader.cleanup_stale_files()
     db.init_db()
     roles.init_roles(ADMIN_ID)
 
