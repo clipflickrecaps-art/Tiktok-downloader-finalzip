@@ -1988,9 +1988,9 @@ async def original_resolution_callback(call: types.CallbackQuery):
 
         await call.message.reply("⏳ မူရင်း Resolution ဗီဒီယို ဒေါင်းနေသည်…")
         await downloader.download_to_file(selected_url, temp_path)
-        await bot.send_video(
+        await bot.send_document(
             chat_id=call.message.chat.id,
-            video=FSInputFile(temp_path, filename="tiktok_original.mp4"),
+            document=FSInputFile(temp_path, filename="tiktok_original.mp4"),
             caption=_cap(title, "📝 ", f"\n🎞 HD/original rendition\n📦 {round(size_mb, 2)} MB"),
         )
         db.log_download(uid, video_url, "video_original", "success")

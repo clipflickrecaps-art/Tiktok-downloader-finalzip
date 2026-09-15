@@ -28,8 +28,8 @@ class CoreTests(unittest.TestCase):
     def test_feature_thresholds(self):
         import settings
         self.assertTrue(settings.can_enable("cooldown_enabled", 0))
-        self.assertFalse(settings.can_enable("premium_enabled", 999))
-        self.assertTrue(settings.can_enable("premium_enabled", 1000))
+        self.assertTrue(settings.can_enable("premium_enabled", 0))
+        self.assertEqual(settings.FLAG_DEFAULTS["premium_enabled"], "1")
 
     def test_database_initialises_in_isolated_directory(self):
         import database

@@ -22,7 +22,7 @@ from logger import log
 
 THRESHOLDS: dict[str, int] = {
     "force_join_enabled":      500,
-    "premium_enabled":        1000,
+    "premium_enabled":           0,
     "monetization_enabled":   1000,
     "ad_system_enabled":      1000,
     "business_layer_enabled": 1000,
@@ -34,12 +34,12 @@ THRESHOLDS: dict[str, int] = {
 # Features with no threshold (always eligible to enable/disable freely)
 NO_THRESHOLD = {"cooldown_enabled"}
 
-# ─── Default flag values (safe defaults — future systems OFF) ─────────────────
+# ─── Default flag values ──────────────────────────────────────────────────────
 
 FLAG_DEFAULTS: dict[str, str] = {
     "cooldown_enabled":       "1",
     "force_join_enabled":     "0",
-    "premium_enabled":        "0",
+    "premium_enabled":        "1",
     "monetization_enabled":   "0",
     "ad_system_enabled":      "0",
     "business_layer_enabled": "0",
@@ -89,6 +89,13 @@ def init_settings() -> None:
                     "INSERT OR IGNORE INTO settings (key, value, updated_at) VALUES (?, ?, ?)",
                     (key, value, now),
                 )
+            # Premium/Pro is intentionally live now; do not wait for the old
+            # 1,000-user gate and migrate existing databases on startup.
+            conn.execute(
+                "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+                ("premium_enabled", "1", now),
+            )
         log.info("Settings initialised (feature flags ready)")
     except Exception as e:
         log.error(f"init_settings failed: {e}")
