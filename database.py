@@ -125,6 +125,25 @@ def init_db():
                 )
             """)
             conn.execute("""
+                CREATE TABLE IF NOT EXISTS payment_orders (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id         INTEGER NOT NULL,
+                    plan_id         INTEGER NOT NULL,
+                    account_id      INTEGER,
+                    amount          REAL NOT NULL,
+                    currency        TEXT NOT NULL,
+                    transaction_ref TEXT,
+                    proof_file_id   TEXT,
+                    proof_kind      TEXT,
+                    status          TEXT NOT NULL DEFAULT 'awaiting_proof',
+                    admin_note      TEXT,
+                    created_at      TEXT NOT NULL,
+                    submitted_at    TEXT,
+                    reviewed_at     TEXT,
+                    reviewed_by     INTEGER
+                )
+            """)
+            conn.execute("""
                 CREATE TABLE IF NOT EXISTS user_usage (
                     user_id          INTEGER PRIMARY KEY,
                     daily_used_count INTEGER NOT NULL DEFAULT 0,

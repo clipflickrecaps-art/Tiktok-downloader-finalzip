@@ -54,6 +54,10 @@ class BroadcastFlow(StatesGroup):
 class YTCookiesFlow(StatesGroup):
     waiting_file = State()   # owner sends cookies.txt document
 
+
+class PaymentFlow(StatesGroup):
+    waiting_proof = State()  # user sends payment screenshot/document
+
 _processing:    set = set()
 _MINI_APP_URL: str = ""   # set once at startup
 
@@ -385,6 +389,14 @@ async def _render_premium(uid: int, message: types.Message) -> None:
             "━━━━━━━━━━━━━━━━\n"
             "ℹ️ Premium ဝယ်ယူရန် Admin ထံ ဆက်သွယ်ပါ။"
         )
+        return await message.reply(
+            text,
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="💳 Plan ဝယ်မည်", callback_data="cb_buy_premium")],
+                [InlineKeyboardButton(text="⬅️ Back", callback_data="cb_back")],
+            ]),
+        )
 
     log.info(f"User {uid} opened Premium page (enabled={premium_enabled}, users={user_count})")
     await message.reply(text, parse_mode="HTML", reply_markup=_back_kb())
@@ -520,6 +532,162 @@ async def btn_premium_handler(message: types.Message):
     if roles.has_any_role(uid):
         return await message.reply("⛔ Admin/Staff မှ Premium page ကို ဝင်ရောက်ခွင့် မရှိပါ။")
     await _render_premium(uid, message)
+
+
+def _payment_plan_keyboard() -> InlineKeyboardMarkup:
+    plans = st.list_premium_plans(active_only=True)
+    rows = []
+    for plan in plans:
+        rows.append([InlineKeyboardButton(
+            text=f"{plan['plan_name']} — {plan['price']:,.0f} {plan['currency']}",
+            callback_data=f"buyplan_{plan['id']}",
+        )])
+    rows.append([InlineKeyboardButton(text="⬅️ Back", callback_data="cb_back")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+@dp.callback_query(F.data == "cb_buy_premium")
+async def cb_buy_premium(call: types.CallbackQuery):
+    await call.answer()
+    plans = st.list_premium_plans(active_only=True)
+    if not plans:
+        return await call.message.edit_text(
+            "ℹ️ ဝယ်ယူနိုင်သော Premium plan မရှိသေးပါ။ Admin ကို ဆက်သွယ်ပါ။"
+        )
+    await call.message.edit_text(
+        "💳 <b>Premium Plan ရွေးပါ</b>\n\n"
+        "Plan ရွေးပြီးနောက် ငွေလွှဲရမည့် account နှင့် order ID ပြပေးပါမည်။",
+        parse_mode="HTML",
+        reply_markup=_payment_plan_keyboard(),
+    )
+
+
+@dp.callback_query(F.data.startswith("buyplan_"))
+async def cb_buy_plan(call: types.CallbackQuery, state: FSMContext):
+    uid = call.from_user.id
+    await call.answer()
+    try:
+        plan_id = int(call.data.split("_", 1)[1])
+    except ValueError:
+        return await call.message.edit_text("❌ Plan မမှန်ကန်ပါ။")
+    accounts = st.list_payment_accounts(active_only=True)
+    account_id = accounts[0]["id"] if accounts else None
+    order = st.create_payment_order(uid, plan_id, account_id)
+    if not order:
+        return await call.message.edit_text("❌ Order ဖန်တီးမရပါ။ Plan သို့မဟုတ် payment account စစ်ပါ။")
+    account_text = ""
+    if accounts:
+        account_text = "\n\n".join(
+            f"💳 <b>{a['method_name']}</b>\n"
+            f"👤 {a['account_name']}\n"
+            f"📱 <code>{a['account_number']}</code>\n"
+            f"📝 {a['note'] or '—'}"
+            for a in accounts
+        )
+    else:
+        account_text = "❌ Payment account မသတ်မှတ်ရသေးပါ။ Admin ကို ဆက်သွယ်ပါ။"
+    await call.message.edit_text(
+        f"🧾 <b>Payment Order #{order['id']}</b>\n"
+        f"⭐ Plan: <b>{order['plan_name']}</b> ({order['duration_days']} ရက်)\n"
+        f"💰 Amount: <b>{order['amount']:,.0f} {order['currency']}</b>\n\n"
+        f"{account_text}\n\n"
+        "ငွေလွှဲပြီး receipt screenshot ကို caption ထဲ Transaction ID ထည့်ပြီး ပို့ပါ။",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📤 Receipt ပို့မည်", callback_data=f"payproof_{order['id']}")],
+            [InlineKeyboardButton(text="⬅️ Back", callback_data="cb_back")],
+        ]),
+    )
+
+
+@dp.callback_query(F.data.startswith("payproof_"))
+async def cb_payment_proof(call: types.CallbackQuery, state: FSMContext):
+    uid = call.from_user.id
+    try:
+        order_id = int(call.data.split("_", 1)[1])
+    except ValueError:
+        return await call.answer("Order မမှန်ကန်ပါ။", show_alert=True)
+    order = st.get_payment_order(order_id, uid)
+    if not order or order["status"] not in ("awaiting_proof", "rejected"):
+        return await call.answer("ဒီ order ကို receipt ထပ်ပို့မရပါ။", show_alert=True)
+    await state.set_state(PaymentFlow.waiting_proof)
+    await state.update_data(order_id=order_id)
+    await call.answer()
+    await call.message.reply(
+        f"📤 Order #{order_id} အတွက် payment receipt ကို <b>Photo သို့မဟုတ် Document</b> အဖြစ် ပို့ပါ။\n"
+        "Caption ထဲမှာ Transaction ID ထည့်နိုင်ပါတယ်။",
+        parse_mode="HTML",
+    )
+
+
+async def _receive_payment_proof(message: types.Message, state: FSMContext, file_id: str, kind: str):
+    data = await state.get_data()
+    order_id = data.get("order_id")
+    if not order_id or not st.submit_payment_proof(
+        int(order_id), message.from_user.id, file_id, kind, message.caption or ""
+    ):
+        await state.clear()
+        return await message.reply("❌ Receipt မတင်နိုင်ပါ။ Order status စစ်ပါ။")
+    await state.clear()
+    await message.reply(
+        f"✅ Payment receipt တင်ပြီးပါပြီ။\n🧾 Order #{order_id}\n"
+        "Admin စစ်ဆေးပြီးနောက် Premium အလိုအလျောက်ဖွင့်ပေးပါမည်။"
+    )
+    order = st.get_payment_order(int(order_id), message.from_user.id)
+    if not order:
+        return
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="✅ Approve", callback_data=f"payapprove_{order_id}"),
+        InlineKeyboardButton(text="❌ Reject", callback_data=f"payreject_{order_id}"),
+    ]])
+    admin_text = (
+        f"🧾 <b>New Payment Review — Order #{order_id}</b>\n"
+        f"👤 User: <code>{message.from_user.id}</code>\n"
+        f"⭐ Plan: {order['plan_name']} ({order['duration_days']} ရက်)\n"
+        f"💰 {order['amount']:,.0f} {order['currency']}\n"
+        f"📝 Ref: {message.caption or '—'}"
+    )
+    await bot.send_message(ADMIN_ID, admin_text, parse_mode="HTML", reply_markup=kb)
+    if kind == "photo":
+        await bot.send_photo(ADMIN_ID, file_id, caption=f"Order #{order_id} receipt")
+    else:
+        await bot.send_document(ADMIN_ID, file_id, caption=f"Order #{order_id} receipt")
+
+
+@dp.message(PaymentFlow.waiting_proof, F.photo)
+async def payment_proof_photo(message: types.Message, state: FSMContext):
+    await _receive_payment_proof(message, state, message.photo[-1].file_id, "photo")
+
+
+@dp.message(PaymentFlow.waiting_proof, F.document)
+async def payment_proof_document(message: types.Message, state: FSMContext):
+    await _receive_payment_proof(message, state, message.document.file_id, "document")
+
+
+@dp.callback_query(F.data.startswith("payapprove_") | F.data.startswith("payreject_"))
+async def review_payment_callback(call: types.CallbackQuery):
+    if not roles.is_owner(call.from_user.id):
+        return await call.answer("Owner only", show_alert=True)
+    try:
+        approved = call.data.startswith("payapprove_")
+        order_id = int(call.data.split("_", 1)[1])
+    except ValueError:
+        return await call.answer("Invalid order", show_alert=True)
+    result = st.review_payment_order(order_id, approved, call.from_user.id)
+    if not result:
+        return await call.answer("Order already reviewed or not found", show_alert=True)
+    await call.answer("Approved" if approved else "Rejected")
+    await call.message.edit_reply_markup(reply_markup=None)
+    user_id = result["user_id"]
+    if approved:
+        await bot.send_message(
+            user_id,
+            f"✅ <b>Payment အတည်ပြုပြီးပါပြီ!</b>\n⭐ {result['plan_name']}\n"
+            f"Premium ကို {result['duration_days']} ရက် activate လုပ်ပြီးပါပြီ။",
+            parse_mode="HTML",
+        )
+    else:
+        await bot.send_message(user_id, "❌ Payment receipt ကို Admin မှ reject လုပ်ထားပါသည်။ ပြန်တင်နိုင်ပါသည်။")
 
 
 # ─── Admin keyboard — Analytics ──────────────────────────────────────────────
@@ -1150,6 +1318,25 @@ async def listplan_handler(message: types.Message):
     if not roles.is_owner(uid):
         return await message.reply(roles.OWNER_ONLY)
     await admin.send_premium_plans(message)
+
+
+@dp.message(Command("pendingpayments"))
+async def pendingpayments_handler(message: types.Message):
+    uid = message.from_user.id
+    if not roles.is_owner(uid):
+        return await message.reply(roles.OWNER_ONLY)
+    rows = st.list_pending_payment_orders()
+    if not rows:
+        return await message.reply("✅ Pending payment order မရှိပါ။")
+    lines = ["🧾 <b>Pending Payment Orders</b>", "━━━━━━━━━━━━━━━━"]
+    for row in rows:
+        name = row.get("first_name") or row.get("username") or "—"
+        lines.append(
+            f"• <b>#{row['id']}</b> — <code>{row['user_id']}</code> {name}\n"
+            f"  {row['plan_name']} / {row['amount']:,.0f} {row['currency']}\n"
+            f"  Submitted: {row['submitted_at'] or '—'}"
+        )
+    await message.reply("\n".join(lines), parse_mode="HTML")
 
 
 @dp.message(Command("toggleplan"))

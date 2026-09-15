@@ -14,7 +14,7 @@ Current safe defaults (only cooldown is active; everything else defaults OFF):
   sponsor_mode_enabled   = 0   locked until 5000 users
 """
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from database import _connect
 from logger import log
 
@@ -780,3 +780,149 @@ def format_premium_plans_text(rows: list) -> str:
     lines.append("━━━━━━━━━━━━━━━━")
     lines.append("🔧 /toggleplan &lt;id&gt; • /delplan &lt;id&gt;")
     return "\n".join(lines)
+
+
+# ─── Manual payment orders ────────────────────────────────────────────────────
+
+def create_payment_order(user_id: int, plan_id: int, account_id: int | None = None) -> dict | None:
+    """Create a pending manual-payment order for an active plan."""
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        with _connect() as conn:
+            plan = conn.execute(
+                "SELECT * FROM premium_plans WHERE id = ? AND is_active = 1", (plan_id,)
+            ).fetchone()
+            if not plan:
+                return None
+            if account_id is not None:
+                account = conn.execute(
+                    "SELECT id FROM payment_accounts WHERE id = ? AND is_active = 1", (account_id,)
+                ).fetchone()
+                if not account:
+                    account_id = None
+            cur = conn.execute(
+                """INSERT INTO payment_orders
+                   (user_id, plan_id, account_id, amount, currency, status, created_at)
+                   VALUES (?, ?, ?, ?, ?, 'awaiting_proof', ?)""",
+                (user_id, plan_id, account_id, plan["price"], plan["currency"], now),
+            )
+            order_id = cur.lastrowid
+            row = conn.execute(
+                """SELECT o.*, p.plan_name, p.duration_days, a.method_name,
+                          a.account_name, a.account_number, a.note
+                   FROM payment_orders o
+                   JOIN premium_plans p ON p.id = o.plan_id
+                   LEFT JOIN payment_accounts a ON a.id = o.account_id
+                   WHERE o.id = ?""", (order_id,)
+            ).fetchone()
+        return dict(row)
+    except Exception as e:
+        log.error(f"create_payment_order failed: {e}")
+        return None
+
+
+def get_payment_order(order_id: int, user_id: int | None = None) -> dict | None:
+    try:
+        with _connect() as conn:
+            sql = """SELECT o.*, p.plan_name, p.duration_days,
+                            a.method_name, a.account_name, a.account_number, a.note
+                     FROM payment_orders o
+                     JOIN premium_plans p ON p.id = o.plan_id
+                     LEFT JOIN payment_accounts a ON a.id = o.account_id
+                     WHERE o.id = ?"""
+            args = [order_id]
+            if user_id is not None:
+                sql += " AND o.user_id = ?"
+                args.append(user_id)
+            row = conn.execute(sql, args).fetchone()
+        return dict(row) if row else None
+    except Exception as e:
+        log.error(f"get_payment_order failed: {e}")
+        return None
+
+
+def submit_payment_proof(order_id: int, user_id: int, file_id: str,
+                        proof_kind: str, transaction_ref: str = "") -> bool:
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        with _connect() as conn:
+            cur = conn.execute(
+                """UPDATE payment_orders
+                   SET proof_file_id = ?, proof_kind = ?, transaction_ref = ?,
+                       status = 'pending_review', submitted_at = ?
+                   WHERE id = ? AND user_id = ?
+                     AND status IN ('awaiting_proof', 'rejected')""",
+                (file_id, proof_kind, transaction_ref.strip(), now, order_id, user_id),
+            )
+            return cur.rowcount == 1
+    except Exception as e:
+        log.error(f"submit_payment_proof failed: {e}")
+        return False
+
+
+def list_pending_payment_orders(limit: int = 20) -> list:
+    try:
+        with _connect() as conn:
+            rows = conn.execute(
+                """SELECT o.*, p.plan_name, p.duration_days,
+                          u.username, u.first_name
+                   FROM payment_orders o
+                   JOIN premium_plans p ON p.id = o.plan_id
+                   LEFT JOIN users u ON u.user_id = o.user_id
+                   WHERE o.status = 'pending_review'
+                   ORDER BY o.submitted_at ASC LIMIT ?""", (limit,)
+            ).fetchall()
+        return [dict(r) for r in rows]
+    except Exception as e:
+        log.error(f"list_pending_payment_orders failed: {e}")
+        return []
+
+
+def review_payment_order(order_id: int, approved: bool, reviewed_by: int,
+                         note: str = "") -> dict | None:
+    """Approve/reject atomically; approval extends Premium immediately."""
+    now = datetime.now(timezone.utc)
+    try:
+        with _connect() as conn:
+            row = conn.execute(
+                """SELECT o.*, p.plan_name, p.duration_days
+                   FROM payment_orders o JOIN premium_plans p ON p.id = o.plan_id
+                   WHERE o.id = ? AND o.status = 'pending_review'""", (order_id,)
+            ).fetchone()
+            if not row:
+                return None
+            new_status = "approved" if approved else "rejected"
+            conn.execute(
+                """UPDATE payment_orders
+                   SET status = ?, admin_note = ?, reviewed_at = ?, reviewed_by = ?
+                   WHERE id = ? AND status = 'pending_review'""",
+                (new_status, note.strip(), now.isoformat(), reviewed_by, order_id),
+            )
+            if approved:
+                current = conn.execute(
+                    "SELECT expires_at FROM premium WHERE user_id = ?", (row["user_id"],)
+                ).fetchone()
+                base = now
+                if current:
+                    old = datetime.fromisoformat(current["expires_at"])
+                    base = max(base, old)
+                    conn.execute(
+                        "UPDATE premium SET expires_at = ?, reason = ?, plan_name = ?, granted_by = ?, updated_at = ? WHERE user_id = ?",
+                        ((base + timedelta(days=row["duration_days"])).isoformat(),
+                         f"payment_order_{order_id}", row["plan_name"], reviewed_by, now.isoformat(), row["user_id"]),
+                    )
+                else:
+                    conn.execute(
+                        """INSERT INTO premium
+                           (user_id, expires_at, reason, granted_at, plan_name, granted_by, updated_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                        (row["user_id"],
+                         (now + timedelta(days=row["duration_days"])).isoformat(),
+                         f"payment_order_{order_id}", now.isoformat(), row["plan_name"], reviewed_by, now.isoformat()),
+                    )
+            result = dict(row)
+            result["status"] = new_status
+        return result
+    except Exception as e:
+        log.error(f"review_payment_order failed: {e}")
+        return None

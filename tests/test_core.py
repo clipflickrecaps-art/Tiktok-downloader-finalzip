@@ -76,6 +76,25 @@ class CoreTests(unittest.TestCase):
                 self.assertTrue(database.consume_yt_daily(5, 1))
                 self.assertFalse(database.consume_yt_daily(5, 1))
 
+    def test_manual_payment_approval_activates_premium(self):
+        import database
+        import settings
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.object(database, "DB_FILE", str(Path(tmp) / "bot.db")):
+                database.init_db()
+                settings.init_settings()
+                plan_id = settings.add_premium_plan("Test Pro", 7, 5000, "MMK")
+                account_id = settings.add_payment_account("ManualPay", "Owner", "09-123")
+                order = settings.create_payment_order(77, plan_id, account_id)
+                self.assertEqual(order["status"], "awaiting_proof")
+                self.assertTrue(settings.submit_payment_proof(order["id"], 77, "proof-1", "photo", "TX-1"))
+                self.assertEqual(len(settings.list_pending_payment_orders()), 1)
+                result = settings.review_payment_order(order["id"], True, 999)
+                self.assertEqual(result["status"], "approved")
+                with database._connect() as conn:
+                    row = conn.execute("SELECT plan_name FROM premium WHERE user_id = 77").fetchone()
+                self.assertEqual(row["plan_name"], "Test Pro")
+
     def test_miniapp_origin_and_token_policy(self):
         import miniapp
         with patch.dict(os.environ, {"MINIAPP_ORIGIN": "https://app.example.com"}):
