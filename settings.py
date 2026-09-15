@@ -7,10 +7,10 @@ required user count is reached.
 Current safe defaults (only cooldown is active; everything else defaults OFF):
   cooldown_enabled       = 1   active now
   force_join_enabled     = 0   locked until 500 users
-  premium_enabled        = 0   locked until 1000 users
+  premium_enabled        = 1   enabled immediately
   monetization_enabled   = 0   locked until 1000 users
   business_layer_enabled = 0   locked until 1000 users
-  pro_features_enabled   = 0   locked until 1000 users
+  pro_features_enabled   = 1   enabled immediately
   sponsor_mode_enabled   = 0   locked until 5000 users
 """
 
@@ -26,7 +26,7 @@ THRESHOLDS: dict[str, int] = {
     "monetization_enabled":   1000,
     "ad_system_enabled":      1000,
     "business_layer_enabled": 1000,
-    "pro_features_enabled":   1000,
+    "pro_features_enabled":      0,
     "task_system_enabled":    5000,
     "sponsor_mode_enabled":   5000,
 }
@@ -43,7 +43,7 @@ FLAG_DEFAULTS: dict[str, str] = {
     "monetization_enabled":   "0",
     "ad_system_enabled":      "0",
     "business_layer_enabled": "0",
-    "pro_features_enabled":   "0",
+    "pro_features_enabled":   "1",
     "task_system_enabled":    "0",
     "sponsor_mode_enabled":   "0",
 }
@@ -95,6 +95,11 @@ def init_settings() -> None:
                 "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?) "
                 "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
                 ("premium_enabled", "1", now),
+            )
+            conn.execute(
+                "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+                ("pro_features_enabled", "1", now),
             )
         log.info("Settings initialised (feature flags ready)")
     except Exception as e:
@@ -922,6 +927,12 @@ def review_payment_order(order_id: int, approved: bool, reviewed_by: int,
                     )
             result = dict(row)
             result["status"] = new_status
+        if approved and "pro" in str(result.get("plan_name", "")).lower():
+            try:
+                from pro import grant_pro
+                grant_pro(result["user_id"], int(result["duration_days"]), reviewed_by, plan="pro")
+            except Exception as exc:
+                log.error(f"Pro entitlement activation failed for payment order {order_id}: {exc}")
         return result
     except Exception as e:
         log.error(f"review_payment_order failed: {e}")

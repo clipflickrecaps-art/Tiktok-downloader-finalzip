@@ -144,6 +144,86 @@ def init_db():
                 )
             """)
             conn.execute("""
+                CREATE TABLE IF NOT EXISTS pro_entitlements (
+                    user_id    INTEGER PRIMARY KEY,
+                    plan       TEXT NOT NULL DEFAULT 'pro',
+                    status     TEXT NOT NULL DEFAULT 'active',
+                    started_at TEXT NOT NULL,
+                    expires_at TEXT NOT NULL,
+                    granted_by INTEGER,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS pro_batches (
+                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id    INTEGER NOT NULL,
+                    status     TEXT NOT NULL DEFAULT 'pending',
+                    total      INTEGER NOT NULL DEFAULT 0,
+                    completed  INTEGER NOT NULL DEFAULT 0,
+                    failed     INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS pro_jobs (
+                    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                    batch_id      INTEGER,
+                    user_id       INTEGER NOT NULL,
+                    url           TEXT NOT NULL,
+                    platform      TEXT NOT NULL,
+                    status        TEXT NOT NULL DEFAULT 'pending',
+                    priority      INTEGER NOT NULL DEFAULT 10,
+                    attempts      INTEGER NOT NULL DEFAULT 0,
+                    max_attempts  INTEGER NOT NULL DEFAULT 3,
+                    error_message TEXT,
+                    result_path   TEXT,
+                    quality       TEXT,
+                    format        TEXT,
+                    created_at    TEXT NOT NULL,
+                    started_at    TEXT,
+                    completed_at  TEXT,
+                    updated_at    TEXT NOT NULL,
+                    UNIQUE(user_id, url, status)
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS pro_history (
+                    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                    job_id         INTEGER NOT NULL,
+                    user_id        INTEGER NOT NULL,
+                    url            TEXT NOT NULL,
+                    platform       TEXT NOT NULL,
+                    filename       TEXT,
+                    quality        TEXT,
+                    resolution     TEXT,
+                    format         TEXT,
+                    status         TEXT NOT NULL,
+                    enhancement    TEXT,
+                    error_message  TEXT,
+                    created_at     TEXT NOT NULL,
+                    completed_at   TEXT
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS pro_enhancement_jobs (
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    job_id       INTEGER NOT NULL,
+                    user_id      INTEGER NOT NULL,
+                    mode         TEXT NOT NULL,
+                    preset       TEXT NOT NULL DEFAULT 'balanced',
+                    status       TEXT NOT NULL DEFAULT 'pending',
+                    input_path   TEXT,
+                    output_path  TEXT,
+                    error_message TEXT,
+                    created_at   TEXT NOT NULL,
+                    started_at   TEXT,
+                    completed_at TEXT
+                )
+            """)
+            conn.execute("""
                 CREATE TABLE IF NOT EXISTS user_usage (
                     user_id          INTEGER PRIMARY KEY,
                     daily_used_count INTEGER NOT NULL DEFAULT 0,

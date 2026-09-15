@@ -95,6 +95,25 @@ class CoreTests(unittest.TestCase):
                     row = conn.execute("SELECT plan_name FROM premium WHERE user_id = 77").fetchone()
                 self.assertEqual(row["plan_name"], "Test Pro")
 
+    def test_pro_queue_requires_entitlement_and_persists_status(self):
+        import database
+        import pro
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.object(database, "DB_FILE", str(Path(tmp) / "bot.db")):
+                database.init_db()
+                with self.assertRaises(PermissionError):
+                    pro.create_batch(77, ["https://www.tiktok.com/@a/video/1"])
+                self.assertTrue(pro.grant_pro(77, 30, 999))
+                batch = pro.create_batch(77, [
+                    "https://www.tiktok.com/@a/video/1",
+                    "https://youtu.be/example",
+                ])
+                self.assertEqual(batch["total"], 2)
+                job = pro.claim_next_job()
+                self.assertEqual(job["status"], "pending")
+                self.assertTrue(pro.finish_job(job["id"], "failed", "temporary"))
+                self.assertTrue(pro.retry_job(77, job["id"]))
+
     def test_miniapp_origin_and_token_policy(self):
         import miniapp
         with patch.dict(os.environ, {"MINIAPP_ORIGIN": "https://app.example.com"}):

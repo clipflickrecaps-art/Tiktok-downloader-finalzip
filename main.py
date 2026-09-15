@@ -17,6 +17,8 @@ import roles
 import cooldown as cd
 import referral as ref
 import settings as st
+import pro
+import enhancement
 from logger import log, send_admin_alert
 import downloader
 from downloader import DownloadError
@@ -62,6 +64,13 @@ class PaymentFlow(StatesGroup):
 class AdminBillingFlow(StatesGroup):
     waiting_payment_account = State()
     waiting_premium_plan = State()
+    waiting_pro_grant = State()
+    waiting_pro_revoke = State()
+
+
+class ProBatchFlow(StatesGroup):
+    waiting_urls = State()
+    waiting_video = State()
 
 _processing:    set = set()
 _MINI_APP_URL: str = ""   # set once at startup
@@ -232,6 +241,7 @@ def _main_reply_kb() -> ReplyKeyboardMarkup:
         [KeyboardButton(text="🎁 Invite / Referral"),
          KeyboardButton(text="🏠 Main Menu")],
         [KeyboardButton(text="⭐ Premium / VIP")],
+        [KeyboardButton(text="🚀 Pro Tools")],
     ]
     if _ACTIVE_DOMAIN:
         rows.append([
@@ -537,6 +547,179 @@ async def btn_premium_handler(message: types.Message):
     if roles.has_any_role(uid):
         return await message.reply("⛔ Admin/Staff မှ Premium page ကို ဝင်ရောက်ခွင့် မရှိပါ။")
     await _render_premium(uid, message)
+
+
+def _pro_tools_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📦 Batch Download", callback_data="pro_batch_start")],
+        [InlineKeyboardButton(text="📋 Queue Status", callback_data="pro_queue")],
+        [InlineKeyboardButton(text="✨ Enhance / Upscale", callback_data="pro_enhance_start")],
+    ])
+
+
+@dp.message(F.text == "🚀 Pro Tools")
+async def pro_tools_button(message: types.Message):
+    if db.is_banned(message.from_user.id):
+        return
+    if not pro.is_pro(message.from_user.id):
+        return await message.reply(
+            "🔒 <b>Pro Plan လိုအပ်ပါသည်</b>\n\n"
+            "Pro entitlement မရှိသေးပါ။ Admin ထံမှ Pro activate ပြုလုပ်ပါ။",
+            parse_mode="HTML",
+        )
+    await message.reply(
+        "🚀 <b>Pro Tools</b>\n\n"
+        f"Batch limit: <b>{pro.MAX_BATCH_SIZE}</b> URLs\n"
+        f"Concurrent jobs: <b>{pro.PRO_CONCURRENCY}</b>",
+        parse_mode="HTML", reply_markup=_pro_tools_keyboard(),
+    )
+
+
+@dp.callback_query(F.data == "pro_batch_start")
+async def pro_batch_start(call: types.CallbackQuery, state: FSMContext):
+    if not pro.is_pro(call.from_user.id):
+        return await call.answer("Pro plan required", show_alert=True)
+    await call.answer()
+    await state.set_state(ProBatchFlow.waiting_urls)
+    await call.message.reply(
+        f"📦 URL တွေကို line တစ်ကြောင်းစီပို့ပါ (အများဆုံး {pro.MAX_BATCH_SIZE} ခု)\n"
+        "Duplicate/invalid URL တွေကို system က စစ်ပြီး skip လုပ်ပါမယ်။\n\n"
+        "Cancel လုပ်ရန် /cancel နှိပ်ပါ။"
+    )
+
+
+@dp.callback_query(F.data == "pro_enhance_start")
+async def pro_enhance_start(call: types.CallbackQuery, state: FSMContext):
+    if not pro.is_pro(call.from_user.id):
+        return await call.answer("Pro plan required", show_alert=True)
+    await state.set_state(ProBatchFlow.waiting_video)
+    await call.answer()
+    await call.message.reply(
+        "✨ Video file ကိုပို့ပြီး Enhancement mode ကိုရွေးပါ။\n"
+        "လက်ခံသော mode: <code>original</code>, <code>smart_upscale</code>, <code>enhance</code>, <code>upscale_enhance</code>, <code>fps60</code>\n"
+        "ဥပမာ: <code>smart_upscale|high</code> ကို caption ထဲထည့်ပါ။",
+        parse_mode="HTML",
+    )
+
+
+async def _receive_pro_video(message: types.Message, file_id: str):
+    uid = message.from_user.id
+    if not pro.is_pro(uid):
+        return await message.reply("🔒 Pro plan required")
+    mode, preset = "original", "balanced"
+    if message.caption and "|" in message.caption:
+        mode, preset = [part.strip().lower() for part in message.caption.split("|", 1)]
+    elif message.caption:
+        mode = message.caption.strip().lower()
+    input_path = output_path = None
+    try:
+        file_info = await bot.get_file(file_id)
+        input_path = os.path.join(downloader.TEMP_DIR, f"pro_enhance_{uid}_{message.message_id}_in.mp4")
+        output_path = os.path.join(downloader.TEMP_DIR, f"pro_enhance_{uid}_{message.message_id}_out.mp4")
+        await bot.download_file(file_info.file_path, destination=input_path)
+        job_id = pro.create_enhancement_job(uid, mode, preset, input_path)
+        await message.reply(f"⏳ Enhancement #{job_id} စတင်နေပါပြီ…")
+        await enhancement.enhance_video(input_path, output_path, mode, preset)
+        pro.finish_enhancement_job(job_id, "completed", output_path)
+        await bot.send_document(uid, FSInputFile(output_path, filename=f"enhanced_{message.message_id}.mp4"), caption=f"✨ Pro Enhancement\nMode: {mode}\nPreset: {preset}")
+    except Exception as exc:
+        if "job_id" in locals():
+            pro.finish_enhancement_job(job_id, "failed", error=str(exc))
+        await message.reply(f"⚠️ Enhancement မရနိုင်ပါ။ Original quality ကို ဆက်သုံးနိုင်ပါတယ်။\n{str(exc)[:180]}")
+    finally:
+        for path in (input_path, output_path):
+            if path:
+                downloader.cleanup_file(path)
+
+
+@dp.message(ProBatchFlow.waiting_video, F.video)
+async def pro_enhance_video(message: types.Message, state: FSMContext):
+    await state.clear()
+    await _receive_pro_video(message, message.video.file_id)
+
+
+@dp.message(ProBatchFlow.waiting_video, F.document)
+async def pro_enhance_document(message: types.Message, state: FSMContext):
+    await state.clear()
+    await _receive_pro_video(message, message.document.file_id)
+
+
+@dp.message(ProBatchFlow.waiting_urls, F.text)
+async def pro_batch_urls(message: types.Message, state: FSMContext):
+    uid = message.from_user.id
+    if not pro.is_pro(uid):
+        await state.clear()
+        return await message.reply("🔒 Pro entitlement မရှိတော့ပါ။")
+    urls, invalid = pro.parse_batch_urls(message.text or "")
+    if not urls:
+        return await message.reply("❌ Valid URL မတွေ့ပါ။ URL တစ်ကြောင်းစီ ပြန်ပို့ပါ။")
+    if len(urls) > pro.MAX_BATCH_SIZE:
+        return await message.reply(f"❌ Batch အများဆုံး {pro.MAX_BATCH_SIZE} URLs သာ ခွင့်ပြုသည်။")
+    try:
+        result = pro.create_batch(uid, urls)
+    except (PermissionError, ValueError) as exc:
+        return await message.reply(f"❌ {exc}")
+    await state.clear()
+    invalid_note = f"\n⚠️ Invalid/duplicate skipped: {len(invalid)}" if invalid else ""
+    await message.reply(
+        f"✅ <b>Batch #{result['batch_id']} queued</b>\n"
+        f"📦 Total: {result['total']} jobs\n"
+        f"⏳ Queue status ကို အောက်က button မှာကြည့်နိုင်ပါတယ်။{invalid_note}",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📋 Queue Status", callback_data="pro_queue")],
+        ]),
+    )
+
+
+def _pro_job_keyboard(jobs: list) -> InlineKeyboardMarkup:
+    rows = []
+    for job in jobs[:10]:
+        if job["status"] == "pending":
+            rows.append([InlineKeyboardButton(text=f"🛑 Cancel #{job['id']}", callback_data=f"pro_cancel_{job['id']}")])
+        elif job["status"] == "failed":
+            rows.append([InlineKeyboardButton(text=f"🔁 Retry #{job['id']}", callback_data=f"pro_retry_{job['id']}")])
+    rows.append([InlineKeyboardButton(text="🔄 Refresh", callback_data="pro_queue")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+async def _show_pro_queue(message: types.Message, uid: int):
+    if not pro.is_pro(uid):
+        return await message.reply("🔒 Pro plan required")
+    jobs = pro.list_jobs(uid)
+    if not jobs:
+        return await message.reply("📋 Pro queue empty.")
+    status_icon = {"pending": "⏳", "processing": "⬇️", "completed": "✅", "failed": "❌", "cancelled": "🚫"}
+    lines = ["📋 <b>Pro Queue / History</b>", "━━━━━━━━━━━━━━━━"]
+    for job in jobs[:15]:
+        lines.append(
+            f"{status_icon.get(job['status'], '•')} <b>#{job['id']}</b> "
+            f"{job['platform']} — <code>{job['status']}</code>\n"
+            f"  {job['url'][:70]}"
+            + (f"\n  ⚠️ {job['error_message'][:100]}" if job.get("error_message") else "")
+        )
+    await message.reply("\n".join(lines), parse_mode="HTML", reply_markup=_pro_job_keyboard(jobs))
+
+
+@dp.callback_query(F.data == "pro_queue")
+async def pro_queue_callback(call: types.CallbackQuery):
+    if not pro.is_pro(call.from_user.id):
+        return await call.answer("Pro plan required", show_alert=True)
+    await call.answer()
+    await _show_pro_queue(call.message, call.from_user.id)
+
+
+@dp.callback_query(F.data.startswith("pro_cancel_") | F.data.startswith("pro_retry_"))
+async def pro_job_action(call: types.CallbackQuery):
+    uid = call.from_user.id
+    if not pro.is_pro(uid):
+        return await call.answer("Pro plan required", show_alert=True)
+    try:
+        job_id = int(call.data.rsplit("_", 1)[1])
+    except ValueError:
+        return await call.answer("Invalid job", show_alert=True)
+    ok = pro.cancel_job(uid, job_id) if call.data.startswith("pro_cancel_") else pro.retry_job(uid, job_id)
+    await call.answer("Updated" if ok else "Job status changed or not yours", show_alert=not ok)
 
 
 def _payment_plan_keyboard() -> InlineKeyboardMarkup:
@@ -1069,6 +1252,76 @@ async def monetization_callback(call: types.CallbackQuery):
             [InlineKeyboardButton(text="⬅️ Back", callback_data="billing_back")],
         ]),
     )
+
+
+@dp.message(F.text == "🚀 Pro Management")
+async def pro_admin_button(message: types.Message):
+    if not roles.is_owner(message.from_user.id):
+        return await message.reply(roles.OWNER_ONLY)
+    stats = pro.pro_stats()
+    await message.reply(
+        "🚀 <b>Pro Management</b>\n\n"
+        f"👥 Active Pro: <b>{stats['active_pro']}</b>\n"
+        f"⏳ Pending jobs: <b>{stats['pending']}</b>\n"
+        f"⬇️ Processing: <b>{stats['processing']}</b>\n"
+        f"❌ Failed: <b>{stats['failed']}</b>\n"
+        f"✨ Enhancement: <b>{stats['enhancement']}</b>",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="➕ Grant Pro", callback_data="proadmin_grant")],
+            [InlineKeyboardButton(text="📊 Refresh", callback_data="proadmin_stats")],
+            [InlineKeyboardButton(text="⬅️ Back", callback_data="billing_back")],
+        ]),
+    )
+
+
+@dp.callback_query(F.data == "proadmin_stats")
+async def pro_admin_stats(call: types.CallbackQuery):
+    if not roles.is_owner(call.from_user.id):
+        return await call.answer("Owner only", show_alert=True)
+    stats = pro.pro_stats()
+    await call.answer("Refreshed")
+    await call.message.edit_text(
+        "🚀 <b>Pro Management</b>\n\n"
+        f"👥 Active Pro: <b>{stats['active_pro']}</b>\n"
+        f"⏳ Pending jobs: <b>{stats['pending']}</b>\n"
+        f"⬇️ Processing: <b>{stats['processing']}</b>\n"
+        f"❌ Failed: <b>{stats['failed']}</b>\n"
+        f"✨ Enhancement: <b>{stats['enhancement']}</b>",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="➕ Grant Pro", callback_data="proadmin_grant")],
+            [InlineKeyboardButton(text="📊 Refresh", callback_data="proadmin_stats")],
+            [InlineKeyboardButton(text="⬅️ Back", callback_data="billing_back")],
+        ]),
+    )
+
+
+@dp.callback_query(F.data == "proadmin_grant")
+async def pro_admin_grant_start(call: types.CallbackQuery, state: FSMContext):
+    if not roles.is_owner(call.from_user.id):
+        return await call.answer("Owner only", show_alert=True)
+    await state.set_state(AdminBillingFlow.waiting_pro_grant)
+    await call.answer()
+    await call.message.reply("➕ ဒီပုံစံနဲ့ ပို့ပါ\n<code>User ID | Days</code>\nဥပမာ: <code>123456789 | 30</code>", parse_mode="HTML")
+
+
+@dp.message(AdminBillingFlow.waiting_pro_grant, F.text)
+async def pro_admin_grant_text(message: types.Message, state: FSMContext):
+    if not roles.is_owner(message.from_user.id):
+        return await state.clear()
+    parts = [p.strip() for p in message.text.split("|", 1)]
+    try:
+        if len(parts) != 2:
+            raise ValueError
+        user_id, days = int(parts[0]), int(parts[1])
+        if days < 1:
+            raise ValueError
+    except ValueError:
+        return await message.reply("❌ Format မမှန်ပါ။ User ID | Days ပုံစံနဲ့ ပြန်ပို့ပါ။")
+    ok = pro.grant_pro(user_id, days, message.from_user.id)
+    await state.clear()
+    await message.reply("✅ Pro activate ပြီးပါပြီ။" if ok else "❌ Pro activate မလုပ်နိုင်ပါ။")
 
 
 async def _show_pending_billing(target):
@@ -4274,6 +4527,47 @@ async def _run_polling():
     log.info("Bot has stopped.")
 
 
+async def _process_pro_job(job: dict) -> str:
+    """Process one owned Pro job using the existing provider modules."""
+    uid = job["user_id"]
+    if not pro.is_pro(uid):
+        raise PermissionError("Pro entitlement expired")
+    url = job["url"]
+    job_id = job["id"]
+    path = None
+    try:
+        if job["platform"] == "tiktok":
+            data = await downloader.fetch_tiktok_data(url, hd=True)
+            media_url = downloader.get_best_video_url(data)
+            if not media_url:
+                raise DownloadError("missing_url", "No original URL")
+            path = os.path.join(downloader.TEMP_DIR, f"pro_{uid}_{job_id}.mp4")
+            size = await downloader.download_to_file(media_url, path)
+            title = data.get("title") or "Pro TikTok Video"
+            if size > fb.MAX_TG_SIZE_MB * 1024 * 1024:
+                await bot.send_message(uid, f"✅ Pro job #{job_id} completed but file is large.\n🔗 {media_url}")
+            else:
+                await bot.send_document(uid, FSInputFile(path, filename=f"pro_{job_id}.mp4"), caption=f"🚀 Pro Original\n{title}")
+        elif job["platform"] == "youtube":
+            result = await yt.download_youtube_video(url, uid, job_id, 0)
+            if not result.ok or not result.filepath:
+                raise RuntimeError(result.user_msg or "YouTube download failed")
+            path = result.filepath
+            await bot.send_document(uid, FSInputFile(path, filename=os.path.basename(path)), caption=f"🚀 Pro YouTube\n{result.resolution}")
+        elif job["platform"] == "facebook":
+            result = await fb.download_facebook_video(url, uid, job_id, vip_mode=True)
+            if not result.ok or not result.filepath:
+                raise RuntimeError(result.user_msg or "Facebook download failed")
+            path = result.filepath
+            await bot.send_document(uid, FSInputFile(path, filename=os.path.basename(path)), caption=f"🚀 Pro Facebook\n{result.format_note or ''}")
+        else:
+            raise ValueError("Unsupported platform")
+        return path or ""
+    finally:
+        if path:
+            downloader.cleanup_file(path)
+
+
 async def _referral_cleanup_loop() -> None:
     """Run referral cleanup once per day."""
     while True:
@@ -4294,6 +4588,7 @@ async def main():
     asyncio.create_task(bc.deletion_loop(bot))
     ref.cleanup_inactive_referrals()  # run once at startup
     st.init_settings()
+    asyncio.create_task(pro.worker_loop(_process_pro_job))
 
     mode = f"WEBHOOK ({'deployed' if _IS_DEPLOYED else 'dev'})" if _USE_WEBHOOK else "POLLING"
     log.info(f"Bot starting in {mode} mode...")
