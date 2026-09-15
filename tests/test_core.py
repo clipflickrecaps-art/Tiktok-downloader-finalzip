@@ -12,6 +12,16 @@ class CoreTests(unittest.TestCase):
         self.assertTrue(downloader.is_valid_tiktok_url("https://vm.tiktok.com/abc/"))
         self.assertFalse(downloader.is_valid_tiktok_url("https://example.com/?next=https://tiktok.com/x"))
 
+    def test_tiktok_original_url_selection_preserves_default_fallback(self):
+        import downloader
+        hd = "https://cdn.example/hd.mp4"
+        normal = "https://cdn.example/play.mp4"
+        self.assertEqual(
+            downloader.get_original_video_url({"hdplay": hd, "play": normal}), hd
+        )
+        self.assertIsNone(downloader.get_original_video_url({"play": normal}))
+        self.assertEqual(downloader.get_best_video_url({"play": normal}), normal)
+
     def test_feature_thresholds(self):
         import settings
         self.assertTrue(settings.can_enable("cooldown_enabled", 0))

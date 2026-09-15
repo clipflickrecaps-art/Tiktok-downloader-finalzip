@@ -49,6 +49,22 @@ def is_valid_tiktok_url(url: str) -> bool:
     return bool(TIKTOK_PATTERN.fullmatch(url.strip()))
 
 
+def get_original_video_url(data: dict) -> str | None:
+    """Return the provider's highest-quality no-watermark URL, if exposed."""
+    for field in ("hdplay", "hd_play", "original", "download", "no_watermark"):
+        value = data.get(field)
+        if isinstance(value, str) and re.match(r"^https?://", value):
+            return value
+    return None
+
+
+def get_best_video_url(data: dict) -> str | None:
+    """Return the best available URL, falling back to the normal play URL."""
+    return get_original_video_url(data) or (
+        data.get("play") if isinstance(data.get("play"), str) else None
+    )
+
+
 def get_live_photo_video_urls(data: dict) -> list:
     """Extract live photo video (MP4) URLs from API response.
 

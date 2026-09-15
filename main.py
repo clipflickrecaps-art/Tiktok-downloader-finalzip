@@ -1895,6 +1895,8 @@ async def tiktok_handler(message: types.Message):
         video_id      = data.get("id", "")
 
         kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🎞 မူရင်း Resolution",
+                                  callback_data=f"orig_{video_id}")],
             [InlineKeyboardButton(text="🎵 Audio (MP3) ဒေါင်းမယ်",
                                   callback_data=f"aud_{video_id}")]
         ])
@@ -1949,6 +1951,73 @@ async def tiktok_handler(message: types.Message):
 
 
 # ─── Audio callback ───────────────────────────────────────────────────────────
+
+@dp.callback_query(F.data.startswith("orig_"))
+async def original_resolution_callback(call: types.CallbackQuery):
+    """Download the provider's HD/original rendition on explicit request."""
+    v_id = call.data.split("_", 1)[1]
+    uid = call.from_user.id
+    await call.answer("🎞 မူရင်း Resolution ရှာနေသည်…")
+
+    video_url = f"https://www.tiktok.com/video/{v_id}"
+    temp_path = os.path.join(
+        downloader.TEMP_DIR, f"{uid}_original_{call.message.message_id}.mp4"
+    )
+
+    try:
+        data = await downloader.fetch_tiktok_data(video_url)
+        original_url = downloader.get_original_video_url(data)
+        selected_url = original_url or data.get("play")
+        if not selected_url:
+            raise DownloadError("missing_url", "No original video URL")
+
+        size_mb = (data.get("size") or 0) / (1024 * 1024)
+        title = data.get("title", "")
+
+        if size_mb > fb.MAX_TG_SIZE_MB:
+            db.log_download(uid, video_url, "video_original", "success", "direct_link")
+            _trigger_referral_validation(uid)
+            st.increment_usage(uid)
+            note = (
+                "✅ Provider ရဲ့ HD/original URL"
+                if original_url else
+                "⚠️ Provider မှ HD URL မပေးသဖြင့် လက်ရှိ quality URL"
+            )
+            return await call.message.reply(
+                f"{note}\n\n"
+                f"⚠️ <b>ဖိုင် {size_mb:.1f} MB ကြီးသဖြင့် Direct Link</b>\n\n"
+                f"🔗 <a href=\"{selected_url}\">ဗီဒီယို ဒေါင်းရန် နှိပ်ပါ</a>",
+                parse_mode="HTML",
+                disable_web_page_preview=True,
+            )
+
+        await call.message.reply("⏳ မူရင်း Resolution ဗီဒီယို ဒေါင်းနေသည်…")
+        await downloader.download_to_file(selected_url, temp_path)
+        quality_note = (
+            "🎞 Provider HD/original rendition"
+            if original_url else
+            "⚠️ Provider မှ HD/original URL မပေးပါ — လက်ရှိ rendition"
+        )
+        await bot.send_video(
+            chat_id=call.message.chat.id,
+            video=FSInputFile(temp_path, filename="tiktok_original.mp4"),
+            caption=_cap(title, "📝 ", f"\n{quality_note}\n📦 {round(size_mb, 2)} MB"),
+        )
+        db.log_download(uid, video_url, "video_original", "success")
+        _trigger_referral_validation(uid)
+        st.increment_usage(uid)
+
+    except DownloadError as e:
+        log.error(f"Original-resolution TikTok failed for user {uid}: {e}")
+        db.log_download(uid, video_url, "video_original", "failed", str(e))
+        await call.message.reply(e.user_message())
+    except Exception as e:
+        log.error(f"Unexpected original-resolution error for user {uid}: {e}")
+        db.log_download(uid, video_url, "video_original", "failed", str(e))
+        await call.message.reply("❌ မူရင်း Resolution ဗီဒီယို ဒေါင်းမရပါ။")
+    finally:
+        downloader.cleanup_file(temp_path)
+
 
 @dp.callback_query(F.data.startswith("aud_"))
 async def audio_callback(call: types.CallbackQuery):
