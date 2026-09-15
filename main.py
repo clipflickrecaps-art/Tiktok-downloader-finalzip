@@ -1965,26 +1965,21 @@ async def original_resolution_callback(call: types.CallbackQuery):
     )
 
     try:
-        data = await downloader.fetch_tiktok_data(video_url)
+        data = await downloader.fetch_tiktok_data(video_url, hd=True)
         original_url = downloader.get_original_video_url(data)
-        selected_url = original_url or data.get("play")
-        if not selected_url:
-            raise DownloadError("missing_url", "No original video URL")
+        if not original_url:
+            raise DownloadError("missing_url", "Provider did not return an HD/original URL")
+        selected_url = original_url
 
-        size_mb = (data.get("size") or 0) / (1024 * 1024)
+        size_mb = (data.get("hd_size") or data.get("size") or 0) / (1024 * 1024)
         title = data.get("title", "")
 
         if size_mb > fb.MAX_TG_SIZE_MB:
             db.log_download(uid, video_url, "video_original", "success", "direct_link")
             _trigger_referral_validation(uid)
             st.increment_usage(uid)
-            note = (
-                "✅ Provider ရဲ့ HD/original URL"
-                if original_url else
-                "⚠️ Provider မှ HD URL မပေးသဖြင့် လက်ရှိ quality URL"
-            )
             return await call.message.reply(
-                f"{note}\n\n"
+                "✅ Provider ရဲ့ HD/original URL\n\n"
                 f"⚠️ <b>ဖိုင် {size_mb:.1f} MB ကြီးသဖြင့် Direct Link</b>\n\n"
                 f"🔗 <a href=\"{selected_url}\">ဗီဒီယို ဒေါင်းရန် နှိပ်ပါ</a>",
                 parse_mode="HTML",
@@ -1993,15 +1988,10 @@ async def original_resolution_callback(call: types.CallbackQuery):
 
         await call.message.reply("⏳ မူရင်း Resolution ဗီဒီယို ဒေါင်းနေသည်…")
         await downloader.download_to_file(selected_url, temp_path)
-        quality_note = (
-            "🎞 Provider HD/original rendition"
-            if original_url else
-            "⚠️ Provider မှ HD/original URL မပေးပါ — လက်ရှိ rendition"
-        )
         await bot.send_video(
             chat_id=call.message.chat.id,
             video=FSInputFile(temp_path, filename="tiktok_original.mp4"),
-            caption=_cap(title, "📝 ", f"\n{quality_note}\n📦 {round(size_mb, 2)} MB"),
+            caption=_cap(title, "📝 ", f"\n🎞 HD/original rendition\n📦 {round(size_mb, 2)} MB"),
         )
         db.log_download(uid, video_url, "video_original", "success")
         _trigger_referral_validation(uid)

@@ -19,6 +19,9 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(
             downloader.get_original_video_url({"hdplay": hd, "play": normal}), hd
         )
+        self.assertEqual(
+            downloader.get_original_video_url({"hd_play": hd, "play": normal}), hd
+        )
         self.assertIsNone(downloader.get_original_video_url({"play": normal}))
         self.assertEqual(downloader.get_best_video_url({"play": normal}), normal)
 

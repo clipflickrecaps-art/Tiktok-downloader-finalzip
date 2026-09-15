@@ -137,13 +137,16 @@ def check_image_access(user_id: int) -> bool:
     return True
 
 
-async def fetch_tiktok_data(url: str) -> dict:
+async def fetch_tiktok_data(url: str, hd: bool = False) -> dict:
     log.info(f"API request started for: {url}")
     try:
+        params = {"url": url}
+        if hd:
+            params["hd"] = "1"
         async with aiohttp.ClientSession() as session:
             async with session.get(
                 API_URL,
-                params={"url": url},
+                params=params,
                 timeout=aiohttp.ClientTimeout(total=15)
             ) as response:
                 if response.status == 429:
