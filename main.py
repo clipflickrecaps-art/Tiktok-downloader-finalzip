@@ -68,6 +68,10 @@ class AdminBillingFlow(StatesGroup):
     waiting_pro_revoke = State()
 
 
+class AdminPremiumFlow(StatesGroup):
+    waiting_user_id = State()
+
+
 class ProBatchFlow(StatesGroup):
     waiting_urls = State()
     waiting_video = State()
@@ -262,7 +266,12 @@ async def _render_guide(message: types.Message) -> None:
 async def _render_status(uid: int, message: types.Message) -> None:
     user_row   = db.get_user(uid)
     role       = roles.get_role(uid)
-    role_label = role.capitalize() if role else "Free"
+    premium    = st.get_premium_status(uid)
+    if premium["is_premium"]:
+        plan_name = premium.get("plan_name") or "Premium"
+        role_label = f"Premium ({plan_name})"
+    else:
+        role_label = role.capitalize() if role else "Free"
     cd_text    = cd.status_text(uid)
     dl_count   = db.get_user_download_count(uid)
 
@@ -1121,19 +1130,84 @@ async def btn_give_premium(message: types.Message):
     if not roles.is_owner(uid):
         return await message.reply(roles.OWNER_ONLY)
     await message.reply(
-        "💎 <b>Premium ပေးနည်း</b>\n"
-        "━━━━━━━━━━━━━━━━\n"
-        "<code>/givepremium &lt;user_id&gt; &lt;days&gt; [reason]</code>\n\n"
-        "ဥပမာ:\n"
-        "<code>/givepremium 123456789 30 VIP Gift</code>\n"
-        "<code>/givepremium 123456789 7</code>\n\n"
-        "⚠️ Threshold မပြည့်ဘဲ တိုက်ရိုက်ပေးနိုင်သည်\n\n"
-        "Premium ရုပ်သိမ်းရန်:\n"
-        "<code>/revokepremium &lt;user_id&gt;</code>\n\n"
-        "User စစ်ကြည့်ရန်:\n"
-        "<code>/checkuser &lt;user_id&gt;</code>",
+        "💎 <b>Premium ပေးမည်</b>\n\nUser ကိုရွေးရန် အောက်ကခလုတ်ကိုနှိပ်ပါ။",
         parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="👤 User ရွေးမည်", callback_data="premium_admin_choose_user")],
+            [InlineKeyboardButton(text="⭐ Plan စီမံမည်", callback_data="billing_plans")],
+        ]),
     )
+
+
+@dp.callback_query(F.data == "premium_admin_choose_user")
+async def premium_admin_choose_user(call: types.CallbackQuery, state: FSMContext):
+    if not roles.is_owner(call.from_user.id):
+        return await call.answer("Owner only", show_alert=True)
+    await state.set_state(AdminPremiumFlow.waiting_user_id)
+    await call.answer()
+    await call.message.reply("👤 Premium ပေးမည့် User ID ကို ပို့ပါ။\nဥပမာ: <code>868404865</code>", parse_mode="HTML")
+
+
+@dp.message(AdminPremiumFlow.waiting_user_id, F.text)
+async def premium_admin_user_id(message: types.Message, state: FSMContext):
+    if not roles.is_owner(message.from_user.id):
+        return await state.clear()
+    raw = message.text.strip()
+    if not raw.isdigit():
+        return await message.reply("❌ User ID သည် ဂဏန်းဖြစ်ရမည်။")
+    target_id = int(raw)
+    if not db.get_user(target_id):
+        return await message.reply("❌ ဒီ User ID ကို database ထဲမှာ မတွေ့ပါ။")
+    await state.update_data(target_user_id=target_id)
+    plans = st.list_premium_plans(active_only=True)
+    if not plans:
+        await state.clear()
+        return await message.reply("❌ Active Premium plan မရှိသေးပါ။ ⭐ Premium Plans မှာ plan ထည့်ပါ။")
+    buttons = [[InlineKeyboardButton(
+        text=f"⭐ {p['plan_name']} — {p['duration_days']} ရက် / {p['price']:,.0f} {p['currency']}",
+        callback_data=f"premium_admin_plan_{target_id}_{p['id']}",
+    )] for p in plans]
+    buttons.append([InlineKeyboardButton(text="❌ Cancel", callback_data="premium_admin_cancel")])
+    await message.reply(
+        f"👤 User: <code>{target_id}</code>\n\nပေးမည့် Premium plan ကိုရွေးပါ:",
+        parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+    )
+
+
+@dp.callback_query(F.data.startswith("premium_admin_plan_"))
+async def premium_admin_plan_selected(call: types.CallbackQuery, state: FSMContext):
+    if not roles.is_owner(call.from_user.id):
+        return await call.answer("Owner only", show_alert=True)
+    try:
+        _, _, _, target_raw, plan_raw = call.data.split("_")
+        target_id, plan_id = int(target_raw), int(plan_raw)
+    except (ValueError, AttributeError):
+        return await call.answer("Invalid selection", show_alert=True)
+    plan = next((p for p in st.list_premium_plans(active_only=True) if p["id"] == plan_id), None)
+    if not plan:
+        return await call.answer("Plan မရှိတော့ပါ", show_alert=True)
+    ok = st.grant_premium_admin(target_id, plan["duration_days"], plan["plan_name"], granted_by=call.from_user.id)
+    await state.clear()
+    if not ok:
+        return await call.answer("Premium မပေးနိုင်ပါ", show_alert=True)
+    prem = st.get_premium_status(target_id)
+    exp_str = prem["expires_at"].strftime("%Y-%m-%d %H:%M UTC") if prem["expires_at"] else "?"
+    await call.answer("Premium activated")
+    await call.message.edit_text(
+        "✅ <b>Premium ပေးပြီးပါပြီ</b>\n\n"
+        f"👤 User: <code>{target_id}</code>\n"
+        f"⭐ Plan: <b>{plan['plan_name']}</b>\n"
+        f"📅 Duration: <b>{plan['duration_days']} ရက်</b>\n"
+        f"⏰ Expires: <b>{exp_str}</b>", parse_mode="HTML",
+    )
+
+
+@dp.callback_query(F.data == "premium_admin_cancel")
+async def premium_admin_cancel(call: types.CallbackQuery, state: FSMContext):
+    if roles.is_owner(call.from_user.id):
+        await state.clear()
+    await call.answer("Cancelled")
+    await call.message.edit_text("❌ Premium grant cancelled")
 
 
 @dp.message(F.text == "💎 Premium Users")
