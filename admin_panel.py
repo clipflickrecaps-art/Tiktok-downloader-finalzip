@@ -25,6 +25,8 @@ def get_admin_keyboard(role: str = roles.OWNER) -> ReplyKeyboardMarkup:
             [KeyboardButton(text="⚙️ System Status"),         KeyboardButton(text="👥 Manage Roles")],
             [KeyboardButton(text="📡 Scheduled Jobs"),        KeyboardButton(text="📢 Create Broadcast")],
             [KeyboardButton(text="💎 Premium ပေးမည်"),        KeyboardButton(text="💎 Premium Users")],
+            [KeyboardButton(text="💳 Payment Accounts"),       KeyboardButton(text="⭐ Premium Plans")],
+            [KeyboardButton(text="🧾 Payment Orders")],
         ]
     elif role == roles.ADMIN:
         buttons = [

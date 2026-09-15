@@ -58,6 +58,11 @@ class YTCookiesFlow(StatesGroup):
 class PaymentFlow(StatesGroup):
     waiting_proof = State()  # user sends payment screenshot/document
 
+
+class AdminBillingFlow(StatesGroup):
+    waiting_payment_account = State()
+    waiting_premium_plan = State()
+
 _processing:    set = set()
 _MINI_APP_URL: str = ""   # set once at startup
 
@@ -955,6 +960,197 @@ async def btn_premium_users(message: types.Message):
         return await message.reply(roles.OWNER_ONLY)
     log.info(f"Owner {uid} viewed premium users list")
     await admin.send_active_premium_users(message)
+
+
+def _billing_back_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⬅️ Back to Admin", callback_data="billing_back")],
+    ])
+
+
+def _payment_accounts_keyboard() -> InlineKeyboardMarkup:
+    rows = []
+    for account in st.list_payment_accounts():
+        state = "✅" if account["is_active"] else "⬜"
+        rows.append([
+            InlineKeyboardButton(text=f"{state} {account['method_name']} — {account['account_number']}", callback_data=f"billing_paynoop_{account['id']}"),
+            InlineKeyboardButton(text="ON/OFF", callback_data=f"billing_paytoggle_{account['id']}"),
+            InlineKeyboardButton(text="🗑", callback_data=f"billing_paydelete_{account['id']}"),
+        ])
+    rows.append([InlineKeyboardButton(text="➕ Add Payment Account", callback_data="billing_payadd")])
+    rows.append([InlineKeyboardButton(text="🔄 Refresh", callback_data="billing_accounts")])
+    rows.append([InlineKeyboardButton(text="⬅️ Back", callback_data="billing_back")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _premium_plans_keyboard() -> InlineKeyboardMarkup:
+    rows = []
+    for plan in st.list_premium_plans():
+        state = "✅" if plan["is_active"] else "⬜"
+        rows.append([
+            InlineKeyboardButton(text=f"{state} {plan['plan_name']} — {plan['price']:,.0f} {plan['currency']}", callback_data=f"billing_plannoop_{plan['id']}"),
+            InlineKeyboardButton(text="ON/OFF", callback_data=f"billing_plantoggle_{plan['id']}"),
+            InlineKeyboardButton(text="🗑", callback_data=f"billing_plandelete_{plan['id']}"),
+        ])
+    rows.append([InlineKeyboardButton(text="➕ Add Premium Plan", callback_data="billing_planadd")])
+    rows.append([InlineKeyboardButton(text="🔄 Refresh", callback_data="billing_plans")])
+    rows.append([InlineKeyboardButton(text="⬅️ Back", callback_data="billing_back")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+@dp.message(F.text == "💳 Payment Accounts")
+async def billing_accounts_button(message: types.Message):
+    if not roles.is_owner(message.from_user.id):
+        return await message.reply(roles.OWNER_ONLY)
+    await message.reply(
+        "💳 <b>Payment Accounts</b>\n\n"
+        "ON/OFF သို့မဟုတ် 🗑 ကိုနှိပ်ပြီး စီမံပါ။",
+        parse_mode="HTML", reply_markup=_payment_accounts_keyboard(),
+    )
+
+
+@dp.message(F.text == "⭐ Premium Plans")
+async def billing_plans_button(message: types.Message):
+    if not roles.is_owner(message.from_user.id):
+        return await message.reply(roles.OWNER_ONLY)
+    await message.reply(
+        "⭐ <b>Premium Plans</b>\n\n"
+        "Plan ကို ON/OFF၊ ဖျက်၊ အသစ်ထည့်နိုင်ပါတယ်။",
+        parse_mode="HTML", reply_markup=_premium_plans_keyboard(),
+    )
+
+
+@dp.message(F.text == "🧾 Payment Orders")
+async def billing_orders_button(message: types.Message):
+    if not roles.is_owner(message.from_user.id):
+        return await message.reply(roles.OWNER_ONLY)
+    await _show_pending_billing(message)
+
+
+async def _show_pending_billing(target):
+    rows = st.list_pending_payment_orders()
+    if not rows:
+        return await target.reply("✅ Pending payment order မရှိပါ။", reply_markup=_billing_back_keyboard())
+    lines = ["🧾 <b>Pending Payment Orders</b>", "━━━━━━━━━━━━━━━━"]
+    buttons = []
+    for row in rows:
+        lines.append(
+            f"<b>#{row['id']}</b> — User <code>{row['user_id']}</code>\n"
+            f"⭐ {row['plan_name']} | 💰 {row['amount']:,.0f} {row['currency']}"
+        )
+        buttons.append([
+            InlineKeyboardButton(text=f"✅ Approve #{row['id']}", callback_data=f"payapprove_{row['id']}"),
+            InlineKeyboardButton(text=f"❌ Reject #{row['id']}", callback_data=f"payreject_{row['id']}"),
+        ])
+    buttons.append([InlineKeyboardButton(text="🔄 Refresh", callback_data="billing_orders")])
+    buttons.append([InlineKeyboardButton(text="⬅️ Back", callback_data="billing_back")])
+    return await target.reply("\n".join(lines), parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+
+
+@dp.callback_query(F.data == "billing_accounts")
+async def billing_accounts_callback(call: types.CallbackQuery):
+    if not roles.is_owner(call.from_user.id):
+        return await call.answer("Owner only", show_alert=True)
+    await call.answer()
+    await call.message.edit_text("💳 <b>Payment Accounts</b>", parse_mode="HTML", reply_markup=_payment_accounts_keyboard())
+
+
+@dp.callback_query(F.data == "billing_plans")
+async def billing_plans_callback(call: types.CallbackQuery):
+    if not roles.is_owner(call.from_user.id):
+        return await call.answer("Owner only", show_alert=True)
+    await call.answer()
+    await call.message.edit_text("⭐ <b>Premium Plans</b>", parse_mode="HTML", reply_markup=_premium_plans_keyboard())
+
+
+@dp.callback_query(F.data == "billing_orders")
+async def billing_orders_callback(call: types.CallbackQuery):
+    if not roles.is_owner(call.from_user.id):
+        return await call.answer("Owner only", show_alert=True)
+    await call.answer()
+    await call.message.delete()
+    await _show_pending_billing(call.message)
+
+
+@dp.callback_query(F.data.startswith("billing_paytoggle_") | F.data.startswith("billing_paydelete_"))
+async def billing_pay_account_action(call: types.CallbackQuery):
+    if not roles.is_owner(call.from_user.id):
+        return await call.answer("Owner only", show_alert=True)
+    account_id = int(call.data.rsplit("_", 1)[1])
+    if "toggle" in call.data:
+        result = st.toggle_payment_account(account_id)
+        await call.answer("Updated" if result is not None else "Not found")
+    else:
+        result = st.delete_payment_account(account_id)
+        await call.answer("Deleted" if result else "Not found")
+    await call.message.edit_reply_markup(reply_markup=_payment_accounts_keyboard())
+
+
+@dp.callback_query(F.data.startswith("billing_plantoggle_") | F.data.startswith("billing_plandelete_"))
+async def billing_plan_action(call: types.CallbackQuery):
+    if not roles.is_owner(call.from_user.id):
+        return await call.answer("Owner only", show_alert=True)
+    plan_id = int(call.data.rsplit("_", 1)[1])
+    if "toggle" in call.data:
+        result = st.toggle_premium_plan(plan_id)
+        await call.answer("Updated" if result is not None else "Not found")
+    else:
+        result = st.delete_premium_plan(plan_id)
+        await call.answer("Deleted" if result else "Not found")
+    await call.message.edit_reply_markup(reply_markup=_premium_plans_keyboard())
+
+
+@dp.callback_query(F.data == "billing_payadd")
+async def billing_pay_add(call: types.CallbackQuery, state: FSMContext):
+    if not roles.is_owner(call.from_user.id):
+        return await call.answer("Owner only", show_alert=True)
+    await state.set_state(AdminBillingFlow.waiting_payment_account)
+    await call.answer()
+    await call.message.reply("➕ ဒီပုံစံနဲ့ ပို့ပါ\n<code>Method | Account Name | Account Number | Note</code>\nဥပမာ: <code>KBZPay | Mg Mg | 09xxx | Send here</code>", parse_mode="HTML")
+
+
+@dp.callback_query(F.data == "billing_planadd")
+async def billing_plan_add(call: types.CallbackQuery, state: FSMContext):
+    if not roles.is_owner(call.from_user.id):
+        return await call.answer("Owner only", show_alert=True)
+    await state.set_state(AdminBillingFlow.waiting_premium_plan)
+    await call.answer()
+    await call.message.reply("➕ ဒီပုံစံနဲ့ ပို့ပါ\n<code>Plan Name | Days | Price | Currency</code>\nဥပမာ: <code>30 Days Pro | 30 | 15000 | MMK</code>", parse_mode="HTML")
+
+
+@dp.message(AdminBillingFlow.waiting_payment_account, F.text)
+async def billing_pay_add_text(message: types.Message, state: FSMContext):
+    if not roles.is_owner(message.from_user.id):
+        return await state.clear()
+    parts = [p.strip() for p in message.text.split("|", 3)]
+    if len(parts) < 3 or not all(parts[:3]):
+        return await message.reply("❌ Format မမှန်ပါ။ Method | Name | Number | Note ပုံစံနဲ့ ပြန်ပို့ပါ။")
+    row_id = st.add_payment_account(parts[0], parts[1], parts[2], parts[3] if len(parts) > 3 else "")
+    await state.clear()
+    await message.reply("✅ Payment account ထည့်ပြီးပါပြီ။", reply_markup=_payment_accounts_keyboard() if row_id else None)
+
+
+@dp.message(AdminBillingFlow.waiting_premium_plan, F.text)
+async def billing_plan_add_text(message: types.Message, state: FSMContext):
+    if not roles.is_owner(message.from_user.id):
+        return await state.clear()
+    parts = [p.strip() for p in message.text.split("|", 3)]
+    try:
+        if len(parts) < 3:
+            raise ValueError
+        plan_id = st.add_premium_plan(parts[0], int(parts[1]), float(parts[2]), parts[3] if len(parts) > 3 else "MMK")
+    except ValueError:
+        return await message.reply("❌ Format မမှန်ပါ။ Plan Name | Days | Price | Currency ပုံစံနဲ့ ပြန်ပို့ပါ။")
+    await state.clear()
+    await message.reply("✅ Premium plan ထည့်ပြီးပါပြီ။", reply_markup=_premium_plans_keyboard() if plan_id else None)
+
+
+@dp.callback_query(F.data == "billing_back")
+async def billing_back_callback(call: types.CallbackQuery):
+    if not roles.is_owner(call.from_user.id):
+        return await call.answer("Owner only", show_alert=True)
+    await call.answer()
+    await call.message.answer("🛠 Admin Panel — Owner", reply_markup=admin.get_admin_keyboard(roles.OWNER))
 
 
 # ─── Admin keyboard — Ban / Unban ─────────────────────────────────────────────
