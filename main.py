@@ -1027,6 +1027,50 @@ async def billing_orders_button(message: types.Message):
     await _show_pending_billing(message)
 
 
+@dp.message(F.text == "💰 Monetization")
+async def monetization_button(message: types.Message):
+    if not roles.is_owner(message.from_user.id):
+        return await message.reply(roles.OWNER_ONLY)
+    enabled = bool(st.get_flag("monetization_enabled"))
+    limit = st.get_daily_free_limit()
+    await message.reply(
+        f"💰 <b>Monetization</b>\n\n"
+        f"Status: {'✅ ON' if enabled else '⬜ OFF'}\n"
+        f"Free daily quota: <b>{limit}</b> downloads\n\n"
+        "ON လုပ်ရင် Free user quota စနစ် စတင်ပါမယ်။ Premium user က Unlimited ဖြစ်ပါတယ်။",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Enable", callback_data="billing_monetize_on"),
+             InlineKeyboardButton(text="⬜ Disable", callback_data="billing_monetize_off")],
+            [InlineKeyboardButton(text="🔄 Refresh", callback_data="billing_monetize")],
+            [InlineKeyboardButton(text="⬅️ Back", callback_data="billing_back")],
+        ]),
+    )
+
+
+@dp.callback_query(F.data.in_({"billing_monetize", "billing_monetize_on", "billing_monetize_off"}))
+async def monetization_callback(call: types.CallbackQuery):
+    if not roles.is_owner(call.from_user.id):
+        return await call.answer("Owner only", show_alert=True)
+    if call.data.endswith("_on"):
+        st.set_flag("monetization_enabled", True, changed_by=call.from_user.id)
+    elif call.data.endswith("_off"):
+        st.set_flag("monetization_enabled", False, changed_by=call.from_user.id)
+    await call.answer("Updated" if call.data != "billing_monetize" else "Refreshed")
+    enabled = bool(st.get_flag("monetization_enabled"))
+    await call.message.edit_text(
+        f"💰 <b>Monetization</b>\n\nStatus: {'✅ ON' if enabled else '⬜ OFF'}\n"
+        f"Free daily quota: <b>{st.get_daily_free_limit()}</b> downloads",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Enable", callback_data="billing_monetize_on"),
+             InlineKeyboardButton(text="⬜ Disable", callback_data="billing_monetize_off")],
+            [InlineKeyboardButton(text="🔄 Refresh", callback_data="billing_monetize")],
+            [InlineKeyboardButton(text="⬅️ Back", callback_data="billing_back")],
+        ]),
+    )
+
+
 async def _show_pending_billing(target):
     rows = st.list_pending_payment_orders()
     if not rows:
