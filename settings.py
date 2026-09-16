@@ -706,7 +706,7 @@ def list_premium_plans(active_only: bool = False) -> list:
         with _connect() as conn:
             if active_only:
                 return conn.execute(
-                    "SELECT * FROM premium_plans WHERE is_active = 1 ORDER BY duration_days"
+                    "SELECT * FROM premium_plans WHERE is_active = 1 AND deleted_at IS NULL ORDER BY duration_days"
                 ).fetchall()
             return conn.execute(
                 "SELECT * FROM premium_plans ORDER BY duration_days"
@@ -722,9 +722,9 @@ def toggle_premium_plan(plan_id: int) -> bool | None:
     try:
         with _connect() as conn:
             row = conn.execute(
-                "SELECT is_active FROM premium_plans WHERE id = ?", (plan_id,)
+                "SELECT is_active, deleted_at FROM premium_plans WHERE id = ?", (plan_id,)
             ).fetchone()
-            if not row:
+            if not row or row["deleted_at"]:
                 return None
             new_state = 0 if row["is_active"] else 1
             conn.execute(
@@ -739,13 +739,23 @@ def toggle_premium_plan(plan_id: int) -> bool | None:
 
 
 def delete_premium_plan(plan_id: int) -> bool:
-    """Permanently delete a premium plan."""
+    """Deactivate a premium plan while preserving payment/order history.
+
+    Plans are referenced by payment_orders and may already be attached to
+    active users. Hard-deleting them makes old orders ambiguous and can cause
+    stale inline keyboards to appear active, so the UI's delete action is a
+    soft delete.
+    """
+    now = datetime.now(timezone.utc).isoformat()
     try:
         with _connect() as conn:
-            conn.execute("DELETE FROM premium_plans WHERE id = ?", (plan_id,))
+            conn.execute(
+                "UPDATE premium_plans SET is_active = 0, deleted_at = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL",
+                (now, now, plan_id),
+            )
             deleted = conn.execute("SELECT changes()").fetchone()[0]
         if deleted:
-            log.info(f"Premium plan deleted: id={plan_id}")
+            log.info(f"Premium plan deactivated: id={plan_id}")
         return bool(deleted)
     except Exception as e:
         log.error(f"delete_premium_plan failed for id={plan_id}: {e}")
@@ -795,7 +805,7 @@ def create_payment_order(user_id: int, plan_id: int, account_id: int | None = No
     try:
         with _connect() as conn:
             plan = conn.execute(
-                "SELECT * FROM premium_plans WHERE id = ? AND is_active = 1", (plan_id,)
+                "SELECT * FROM premium_plans WHERE id = ? AND is_active = 1 AND deleted_at IS NULL", (plan_id,)
             ).fetchone()
             if not plan:
                 return None

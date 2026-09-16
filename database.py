@@ -121,9 +121,13 @@ def init_db():
                     currency      TEXT NOT NULL DEFAULT 'MMK',
                     is_active     INTEGER NOT NULL DEFAULT 1,
                     created_at    TEXT NOT NULL,
-                    updated_at    TEXT NOT NULL
+                    updated_at   TEXT NOT NULL
                 )
             """)
+            try:
+                conn.execute("ALTER TABLE premium_plans ADD COLUMN deleted_at TEXT")
+            except Exception:
+                pass
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS payment_orders (
                     id              INTEGER PRIMARY KEY AUTOINCREMENT,

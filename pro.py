@@ -28,16 +28,24 @@ def _now() -> str:
 
 
 def is_pro(user_id: int) -> bool:
-    """Server-side entitlement check; expired/revoked users are rejected."""
+    """Server-side entitlement check; active Premium also unlocks Pro tools.
+
+    Premium and Pro are separate products in the UI, but bulk download is a
+    paid capability. Existing paid Premium users must not be incorrectly
+    denied access just because they predate the Pro table migration.
+    """
     try:
         with _connect() as conn:
             row = conn.execute(
                 "SELECT status, expires_at FROM pro_entitlements WHERE user_id = ?",
                 (user_id,),
             ).fetchone()
-        if not row or row["status"] != "active":
-            return False
-        return datetime.fromisoformat(row["expires_at"]) > datetime.now(timezone.utc)
+            if row and row["status"] == "active" and datetime.fromisoformat(row["expires_at"]) > datetime.now(timezone.utc):
+                return True
+            premium = conn.execute(
+                "SELECT expires_at FROM premium WHERE user_id = ?", (user_id,)
+            ).fetchone()
+        return bool(premium and datetime.fromisoformat(premium["expires_at"]) > datetime.now(timezone.utc))
     except Exception as exc:
         log.error(f"pro entitlement check failed for {user_id}: {exc}")
         return False

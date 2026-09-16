@@ -114,6 +114,27 @@ class CoreTests(unittest.TestCase):
                 self.assertTrue(pro.finish_job(job["id"], "failed", "temporary"))
                 self.assertTrue(pro.retry_job(77, job["id"]))
 
+    def test_deleted_plan_is_deactivated_and_paid_premium_can_bulk_queue(self):
+        import database
+        import settings
+        import pro
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.object(database, "DB_FILE", str(Path(tmp) / "bot.db")):
+                database.init_db()
+                plan_id = settings.add_premium_plan("Monthly", 30, 5000, "MMK")
+                self.assertTrue(settings.delete_premium_plan(plan_id))
+                with database._connect() as conn:
+                    row = conn.execute("SELECT is_active FROM premium_plans WHERE id = ?", (plan_id,)).fetchone()
+                    self.assertEqual(row["is_active"], 0)
+                    deleted = conn.execute("SELECT deleted_at FROM premium_plans WHERE id = ?", (plan_id,)).fetchone()
+                    self.assertIsNotNone(deleted["deleted_at"])
+                self.assertIsNone(settings.toggle_premium_plan(plan_id))
+                self.assertIsNone(settings.create_payment_order(55, plan_id))
+                self.assertTrue(settings.grant_premium_admin(55, 30, "Monthly", 999))
+                self.assertTrue(pro.is_pro(55))
+                batch = pro.create_batch(55, ["https://www.tiktok.com/@a/video/2"])
+                self.assertEqual(batch["total"], 1)
+
     def test_miniapp_origin_and_token_policy(self):
         import miniapp
         with patch.dict(os.environ, {"MINIAPP_ORIGIN": "https://app.example.com"}):

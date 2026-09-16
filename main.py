@@ -1243,6 +1243,12 @@ def _payment_accounts_keyboard() -> InlineKeyboardMarkup:
 def _premium_plans_keyboard() -> InlineKeyboardMarkup:
     rows = []
     for plan in st.list_premium_plans():
+        if plan["deleted_at"]:
+            rows.append([InlineKeyboardButton(
+                text=f"🗑 Deleted — {plan['plan_name']} ({plan['id']})",
+                callback_data=f"billing_plannoop_{plan['id']}",
+            )])
+            continue
         state = "✅" if plan["is_active"] else "⬜"
         rows.append([
             InlineKeyboardButton(text=f"{state} {plan['plan_name']} — {plan['price']:,.0f} {plan['currency']}", callback_data=f"billing_plannoop_{plan['id']}"),
@@ -1467,7 +1473,7 @@ async def billing_plan_action(call: types.CallbackQuery):
         await call.answer("Updated" if result is not None else "Not found")
     else:
         result = st.delete_premium_plan(plan_id)
-        await call.answer("Deleted" if result else "Not found")
+        await call.answer("Deactivated" if result else "Not found")
     await call.message.edit_reply_markup(reply_markup=_premium_plans_keyboard())
 
 
