@@ -1012,12 +1012,6 @@ def review_payment_order(order_id: int, approved: bool, reviewed_by: int,
                     )
             result = dict(row)
             result["status"] = new_status
-        if approved and "pro" in str(result.get("plan_name", "")).lower():
-            try:
-                from pro import grant_pro
-                grant_pro(result["user_id"], int(result["duration_days"]), reviewed_by, plan="pro")
-            except Exception as exc:
-                log.error(f"Pro entitlement activation failed for payment order {order_id}: {exc}")
         return result
     except Exception as e:
         log.error(f"review_payment_order failed: {e}")

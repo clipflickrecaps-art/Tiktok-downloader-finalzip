@@ -93,7 +93,9 @@ class CoreTests(unittest.TestCase):
                 self.assertEqual(result["status"], "approved")
                 with database._connect() as conn:
                     row = conn.execute("SELECT plan_name FROM premium WHERE user_id = 77").fetchone()
+                    legacy_pro = conn.execute("SELECT user_id FROM pro_entitlements WHERE user_id = 77").fetchone()
                 self.assertEqual(row["plan_name"], "Test Pro")
+                self.assertIsNone(legacy_pro)
 
     def test_pro_queue_requires_entitlement_and_persists_status(self):
         import database

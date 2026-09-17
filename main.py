@@ -659,7 +659,7 @@ async def pro_batch_urls(message: types.Message, state: FSMContext):
     uid = message.from_user.id
     if not pro.is_pro(uid):
         await state.clear()
-        return await message.reply("🔒 Pro entitlement မရှိတော့ပါ။")
+        return await message.reply("🔒 ဒီ feature ပါဝင်တဲ့ Premium plan မရှိသေးပါ။")
     urls, invalid = pro.parse_batch_urls(message.text or "")
     if not urls:
         return await message.reply("❌ Valid URL မတွေ့ပါ။ URL တစ်ကြောင်းစီ ပြန်ပို့ပါ။")
@@ -695,7 +695,7 @@ def _pro_job_keyboard(jobs: list) -> InlineKeyboardMarkup:
 
 async def _show_pro_queue(message: types.Message, uid: int):
     if not pro.is_pro(uid):
-        return await message.reply("🔒 Pro plan required")
+        return await message.reply("🔒 Bulk/Queue feature ပါဝင်တဲ့ plan လိုအပ်ပါသည်။")
     jobs = pro.list_jobs(uid)
     if not jobs:
         return await message.reply("📋 Pro queue empty.")
@@ -714,7 +714,7 @@ async def _show_pro_queue(message: types.Message, uid: int):
 @dp.callback_query(F.data == "pro_queue")
 async def pro_queue_callback(call: types.CallbackQuery):
     if not pro.is_pro(call.from_user.id):
-        return await call.answer("Pro plan required", show_alert=True)
+        return await call.answer("Bulk/Queue feature ပါဝင်တဲ့ plan လိုအပ်ပါသည်။", show_alert=True)
     await call.answer()
     await _show_pro_queue(call.message, call.from_user.id)
 
@@ -723,7 +723,7 @@ async def pro_queue_callback(call: types.CallbackQuery):
 async def pro_job_action(call: types.CallbackQuery):
     uid = call.from_user.id
     if not pro.is_pro(uid):
-        return await call.answer("Pro plan required", show_alert=True)
+        return await call.answer("Bulk/Queue feature ပါဝင်တဲ့ plan လိုအပ်ပါသည်။", show_alert=True)
     try:
         job_id = int(call.data.rsplit("_", 1)[1])
     except ValueError:

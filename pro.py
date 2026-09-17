@@ -36,22 +36,22 @@ def is_pro(user_id: int) -> bool:
     """
     try:
         with _connect() as conn:
+            premium = conn.execute(
+                "SELECT expires_at FROM premium WHERE user_id = ?", (user_id,)
+            ).fetchone()
+            if premium and datetime.fromisoformat(premium["expires_at"]) > datetime.now(timezone.utc):
+                try:
+                    import settings
+                    return settings.has_feature(user_id, "bulk_download")
+                except Exception:
+                    return False
             row = conn.execute(
                 "SELECT status, expires_at FROM pro_entitlements WHERE user_id = ?",
                 (user_id,),
             ).fetchone()
             if row and row["status"] == "active" and datetime.fromisoformat(row["expires_at"]) > datetime.now(timezone.utc):
                 return True
-            premium = conn.execute(
-                "SELECT expires_at FROM premium WHERE user_id = ?", (user_id,)
-            ).fetchone()
-        if not premium or datetime.fromisoformat(premium["expires_at"]) <= datetime.now(timezone.utc):
-            return False
-        try:
-            import settings
-            return settings.has_feature(user_id, "bulk_download")
-        except Exception:
-            return True
+        return False
     except Exception as exc:
         log.error(f"pro entitlement check failed for {user_id}: {exc}")
         return False
