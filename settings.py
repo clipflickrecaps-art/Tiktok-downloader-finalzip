@@ -15,6 +15,7 @@ Current safe defaults (only cooldown is active; everything else defaults OFF):
 """
 
 from datetime import datetime, timezone, timedelta
+import json
 from database import _connect
 from logger import log
 
@@ -64,6 +65,58 @@ FLAG_LABELS: dict[str, str] = {
 # Free-download quota per day before ad gate (future monetization)
 DAILY_FREE_QUOTA = 3
 AD_UNLOCK_BATCH  = 10
+
+PLAN_FEATURES = {
+    "tiktok_download": ("TikTok download", True), "youtube_download": ("YouTube download", True),
+    "facebook_download": ("Facebook download", True), "ad_free": ("Ad/quota bypass", False),
+    "tiktok_hd": ("TikTok HD / Original", False), "youtube_resolution": ("YouTube resolution selection", False),
+    "facebook_hd": ("Facebook high quality", False), "bulk_download": ("Bulk download", False),
+    "queue": ("Persistent queue", False), "retry": ("Failed-job retry", 3),
+    "priority_queue": ("Priority queue", False), "history": ("Download history", True),
+    "enhancement": ("Video enhancement / upscale", False), "bulk_limit": ("Bulk URLs per batch", 1),
+    "concurrent_limit": ("Concurrent jobs", 1), "history_days": ("History retention days", 30),
+}
+
+def default_plan_features(plan_name: str) -> dict:
+    name = plan_name.lower(); pro = "pro" in name; plus = "plus" in name or "90" in name
+    values = {key: default for key, (_, default) in PLAN_FEATURES.items()}
+    values.update({"ad_free": True, "tiktok_hd": True, "youtube_resolution": True, "facebook_hd": True})
+    if pro:
+        values.update({"bulk_download": True, "queue": True, "retry": 3, "priority_queue": True, "bulk_limit": 15, "concurrent_limit": 3})
+    if plus:
+        values.update({"enhancement": True, "retry": 5, "bulk_limit": 50, "concurrent_limit": 5, "history_days": 90})
+    return values
+
+def _plan_features_from_row(row) -> dict:
+    try: values = json.loads(row["feature_config"] or "{}")
+    except (TypeError, ValueError, json.JSONDecodeError): values = {}
+    values = {**default_plan_features(row["plan_name"]), **values}
+    return values
+
+def get_user_plan(user_id: int):
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        with _connect() as conn:
+            premium = conn.execute("SELECT * FROM premium WHERE user_id = ? AND expires_at > ?", (user_id, now)).fetchone()
+            if not premium: return None
+            if premium["plan_id"]:
+                return conn.execute("SELECT * FROM premium_plans WHERE id = ?", (premium["plan_id"],)).fetchone()
+            row = conn.execute("SELECT * FROM premium_plans WHERE plan_name = ? ORDER BY id DESC LIMIT 1", (premium["plan_name"] or premium["reason"],)).fetchone()
+            if row:
+                return row
+            legacy_name = premium["plan_name"] or premium["reason"] or "Premium"
+            return {"plan_name": legacy_name, "feature_config": json.dumps(default_plan_features(legacy_name))}
+    except Exception as exc:
+        log.error(f"get_user_plan failed for {user_id}: {exc}"); return None
+
+def has_feature(user_id: int, feature_key: str) -> bool:
+    row = get_user_plan(user_id)
+    return bool(row and _plan_features_from_row(row).get(feature_key, False))
+
+def get_feature_limit(user_id: int, feature_key: str, fallback: int = 0) -> int:
+    row = get_user_plan(user_id)
+    try: return int(_plan_features_from_row(row).get(feature_key, fallback)) if row else fallback
+    except (TypeError, ValueError): return fallback
 
 
 # ─── Initialisation ───────────────────────────────────────────────────────────
@@ -266,7 +319,7 @@ def is_premium_active_system() -> bool:
     return get_flag("premium_enabled")
 
 
-def grant_premium_admin(user_id: int, days: int, plan_name: str, granted_by: int) -> bool:
+def grant_premium_admin(user_id: int, days: int, plan_name: str, granted_by: int, plan_id: int | None = None) -> bool:
     """Admin-controlled premium grant.  Updates premium table directly.
 
     Returns True on success.  Does NOT check the premium_enabled flag —
@@ -287,17 +340,17 @@ def grant_premium_admin(user_id: int, days: int, plan_name: str, granted_by: int
                 expires = base + timedelta(days=days)
                 conn.execute(
                     """UPDATE premium
-                       SET expires_at = ?, reason = ?, updated_at = ?, granted_by = ?
+                       SET expires_at = ?, reason = ?, plan_name = ?, plan_id = ?, updated_at = ?, granted_by = ?
                        WHERE user_id = ?""",
-                    (expires.isoformat(), plan_name, now.isoformat(), granted_by, user_id),
+                    (expires.isoformat(), plan_name, plan_name, plan_id, now.isoformat(), granted_by, user_id),
                 )
             else:
                 conn.execute(
                     """INSERT INTO premium
-                       (user_id, expires_at, reason, granted_at, plan_name, granted_by, updated_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                       (user_id, expires_at, reason, granted_at, plan_name, plan_id, granted_by, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                     (user_id, expires.isoformat(), plan_name,
-                     now.isoformat(), plan_name, granted_by, now.isoformat()),
+                     now.isoformat(), plan_name, plan_id, granted_by, now.isoformat()),
                 )
         log.info(f"Premium granted: user {user_id} — {days}d '{plan_name}' by admin {granted_by}")
         return True
@@ -688,9 +741,10 @@ def add_premium_plan(plan_name: str, duration_days: int,
         with _connect() as conn:
             cur = conn.execute(
                 """INSERT INTO premium_plans
-                   (plan_name, duration_days, price, currency, is_active, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, 1, ?, ?)""",
-                (plan_name, int(duration_days), float(price), currency, now, now),
+                   (plan_name, duration_days, price, currency, is_active, feature_config, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, 1, ?, ?, ?)""",
+                (plan_name, int(duration_days), float(price), currency,
+                 json.dumps(default_plan_features(plan_name)), now, now),
             )
             row_id = cur.lastrowid
         log.info(f"Premium plan added: id={row_id} name='{plan_name}' days={duration_days} price={price}{currency}")
@@ -714,6 +768,27 @@ def list_premium_plans(active_only: bool = False) -> list:
     except Exception as e:
         log.error(f"list_premium_plans failed: {e}")
         return []
+
+def get_plan_features(plan_id: int) -> dict:
+    with _connect() as conn:
+        row = conn.execute("SELECT * FROM premium_plans WHERE id = ?", (plan_id,)).fetchone()
+    return _plan_features_from_row(row) if row else {}
+
+def update_plan_feature(plan_id: int, feature_key: str, value) -> bool:
+    if feature_key not in PLAN_FEATURES:
+        return False
+    try:
+        with _connect() as conn:
+            row = conn.execute("SELECT * FROM premium_plans WHERE id = ? AND deleted_at IS NULL", (plan_id,)).fetchone()
+            if not row:
+                return False
+            values = _plan_features_from_row(row); values[feature_key] = value
+            conn.execute("UPDATE premium_plans SET feature_config = ?, updated_at = ? WHERE id = ?",
+                         (json.dumps(values), datetime.now(timezone.utc).isoformat(), plan_id))
+        return True
+    except Exception as exc:
+        log.error(f"update_plan_feature failed: {exc}")
+        return False
 
 
 def toggle_premium_plan(plan_id: int) -> bool | None:
@@ -922,18 +997,18 @@ def review_payment_order(order_id: int, approved: bool, reviewed_by: int,
                     old = datetime.fromisoformat(current["expires_at"])
                     base = max(base, old)
                     conn.execute(
-                        "UPDATE premium SET expires_at = ?, reason = ?, plan_name = ?, granted_by = ?, updated_at = ? WHERE user_id = ?",
+                        "UPDATE premium SET expires_at = ?, reason = ?, plan_name = ?, plan_id = ?, granted_by = ?, updated_at = ? WHERE user_id = ?",
                         ((base + timedelta(days=row["duration_days"])).isoformat(),
-                         f"payment_order_{order_id}", row["plan_name"], reviewed_by, now.isoformat(), row["user_id"]),
+                         f"payment_order_{order_id}", row["plan_name"], row["plan_id"], reviewed_by, now.isoformat(), row["user_id"]),
                     )
                 else:
                     conn.execute(
                         """INSERT INTO premium
-                           (user_id, expires_at, reason, granted_at, plan_name, granted_by, updated_at)
-                           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                           (user_id, expires_at, reason, granted_at, plan_name, plan_id, granted_by, updated_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                         (row["user_id"],
                          (now + timedelta(days=row["duration_days"])).isoformat(),
-                         f"payment_order_{order_id}", now.isoformat(), row["plan_name"], reviewed_by, now.isoformat()),
+                         f"payment_order_{order_id}", now.isoformat(), row["plan_name"], row["plan_id"], reviewed_by, now.isoformat()),
                     )
             result = dict(row)
             result["status"] = new_status

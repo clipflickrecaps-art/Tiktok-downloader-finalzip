@@ -64,6 +64,7 @@ class PaymentFlow(StatesGroup):
 class AdminBillingFlow(StatesGroup):
     waiting_payment_account = State()
     waiting_premium_plan = State()
+    waiting_feature_value = State()
     waiting_pro_grant = State()
     waiting_pro_revoke = State()
 
@@ -735,8 +736,14 @@ def _payment_plan_keyboard() -> InlineKeyboardMarkup:
     plans = st.list_premium_plans(active_only=True)
     rows = []
     for plan in plans:
+        features = st.get_plan_features(plan["id"])
+        extras = []
+        if features.get("bulk_download"): extras.append(f"Bulk {features.get('bulk_limit', 15)}")
+        if features.get("tiktok_hd"): extras.append("HD")
+        if features.get("enhancement"): extras.append("Enhance")
+        suffix = f" | {' · '.join(extras)}" if extras else ""
         rows.append([InlineKeyboardButton(
-            text=f"{plan['plan_name']} — {plan['price']:,.0f} {plan['currency']}",
+            text=f"{plan['plan_name']} — {plan['price']:,.0f} {plan['currency']}{suffix}",
             callback_data=f"buyplan_{plan['id']}",
         )])
     rows.append([InlineKeyboardButton(text="⬅️ Back", callback_data="cb_back")])
@@ -1186,7 +1193,7 @@ async def premium_admin_plan_selected(call: types.CallbackQuery, state: FSMConte
     plan = next((p for p in st.list_premium_plans(active_only=True) if p["id"] == plan_id), None)
     if not plan:
         return await call.answer("Plan မရှိတော့ပါ", show_alert=True)
-    ok = st.grant_premium_admin(target_id, plan["duration_days"], plan["plan_name"], granted_by=call.from_user.id)
+    ok = st.grant_premium_admin(target_id, plan["duration_days"], plan["plan_name"], granted_by=call.from_user.id, plan_id=plan_id)
     await state.clear()
     if not ok:
         return await call.answer("Premium မပေးနိုင်ပါ", show_alert=True)
@@ -1252,6 +1259,7 @@ def _premium_plans_keyboard() -> InlineKeyboardMarkup:
         state = "✅" if plan["is_active"] else "⬜"
         rows.append([
             InlineKeyboardButton(text=f"{state} {plan['plan_name']} — {plan['price']:,.0f} {plan['currency']}", callback_data=f"billing_plannoop_{plan['id']}"),
+            InlineKeyboardButton(text="⚙️ Features", callback_data=f"billing_planfeatures_{plan['id']}"),
             InlineKeyboardButton(text="ON/OFF", callback_data=f"billing_plantoggle_{plan['id']}"),
             InlineKeyboardButton(text="🗑", callback_data=f"billing_plandelete_{plan['id']}"),
         ])
@@ -1438,6 +1446,59 @@ async def billing_plans_callback(call: types.CallbackQuery):
         return await call.answer("Owner only", show_alert=True)
     await call.answer()
     await call.message.edit_text("⭐ <b>Premium Plans</b>", parse_mode="HTML", reply_markup=_premium_plans_keyboard())
+
+def _plan_features_keyboard(plan_id: int) -> InlineKeyboardMarkup:
+    values = st.get_plan_features(plan_id); rows = []
+    for key, (label, default) in st.PLAN_FEATURES.items():
+        value = values.get(key, default)
+        if isinstance(default, bool):
+            rows.append([InlineKeyboardButton(text=f"{'✅' if value else '⬜'} {label}", callback_data=f"billing_featuretoggle_{plan_id}_{key}")])
+        else:
+            rows.append([InlineKeyboardButton(text=f"🔢 {label}: {value}", callback_data=f"billing_featureprompt_{plan_id}_{key}")])
+    rows.append([InlineKeyboardButton(text="⬅️ Back to Plans", callback_data="billing_plans")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+@dp.callback_query(F.data.startswith("billing_planfeatures_"))
+async def billing_plan_features(call: types.CallbackQuery):
+    if not roles.is_owner(call.from_user.id):
+        return await call.answer("Owner only", show_alert=True)
+    plan_id = int(call.data.rsplit("_", 1)[1])
+    plan = next((p for p in st.list_premium_plans() if p["id"] == plan_id), None)
+    if not plan: return await call.answer("Plan မတွေ့ပါ", show_alert=True)
+    await call.answer()
+    await call.message.edit_text(f"⚙️ <b>{plan['plan_name']} Features</b>\nခလုတ်နှိပ်ပြီး feature/limit ပြင်ပါ။", parse_mode="HTML", reply_markup=_plan_features_keyboard(plan_id))
+
+@dp.callback_query(F.data.startswith("billing_featuretoggle_"))
+async def billing_feature_toggle(call: types.CallbackQuery):
+    if not roles.is_owner(call.from_user.id): return await call.answer("Owner only", show_alert=True)
+    _, _, _, plan_raw, key = call.data.split("_", 4)
+    plan_id = int(plan_raw); current = st.get_plan_features(plan_id).get(key, False)
+    st.update_plan_feature(plan_id, key, not bool(current)); await call.answer("Updated")
+    await call.message.edit_reply_markup(reply_markup=_plan_features_keyboard(plan_id))
+
+@dp.callback_query(F.data.startswith("billing_featureprompt_"))
+async def billing_feature_prompt(call: types.CallbackQuery, state: FSMContext):
+    if not roles.is_owner(call.from_user.id): return await call.answer("Owner only", show_alert=True)
+    _, _, _, plan_raw, key = call.data.split("_", 4)
+    await state.update_data(feature_plan_id=int(plan_raw), feature_key=key)
+    await state.set_state(AdminBillingFlow.waiting_feature_value)
+    await call.answer()
+    await call.message.reply(f"🔢 <code>{key}</code> အတွက် integer value ပို့ပါ။ Unlimited ဆို <code>-1</code> ပို့ပါ။", parse_mode="HTML")
+
+@dp.message(AdminBillingFlow.waiting_feature_value, F.text)
+async def billing_feature_value(message: types.Message, state: FSMContext):
+    if not roles.is_owner(message.from_user.id):
+        return await state.clear()
+    try:
+        value = int(message.text.strip())
+    except ValueError:
+        return await message.reply("❌ Integer value ပို့ပါ။")
+    data = await state.get_data()
+    plan_id = int(data["feature_plan_id"])
+    ok = st.update_plan_feature(plan_id, data["feature_key"], value)
+    await state.clear()
+    await message.reply("✅ Feature limit updated" if ok else "❌ Plan မတွေ့ပါ",
+                        reply_markup=_plan_features_keyboard(plan_id) if ok else None)
 
 
 @dp.callback_query(F.data == "billing_orders")

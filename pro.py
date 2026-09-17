@@ -45,7 +45,13 @@ def is_pro(user_id: int) -> bool:
             premium = conn.execute(
                 "SELECT expires_at FROM premium WHERE user_id = ?", (user_id,)
             ).fetchone()
-        return bool(premium and datetime.fromisoformat(premium["expires_at"]) > datetime.now(timezone.utc))
+        if not premium or datetime.fromisoformat(premium["expires_at"]) <= datetime.now(timezone.utc):
+            return False
+        try:
+            import settings
+            return settings.has_feature(user_id, "bulk_download")
+        except Exception:
+            return True
     except Exception as exc:
         log.error(f"pro entitlement check failed for {user_id}: {exc}")
         return False
@@ -135,8 +141,14 @@ def create_batch(user_id: int, urls: Iterable[str]) -> dict:
     urls = list(urls)
     if not is_pro(user_id):
         raise PermissionError("Pro plan is required")
-    if not urls or len(urls) > MAX_BATCH_SIZE:
-        raise ValueError(f"Batch size must be between 1 and {MAX_BATCH_SIZE}")
+    try:
+        import settings
+        configured_limit = settings.get_feature_limit(user_id, "bulk_limit", MAX_BATCH_SIZE)
+    except Exception:
+        configured_limit = MAX_BATCH_SIZE
+    limit = min(MAX_BATCH_SIZE, configured_limit) if configured_limit > 0 else MAX_BATCH_SIZE
+    if not urls or len(urls) > limit:
+        raise ValueError(f"Batch size must be between 1 and {limit}")
     now = _now()
     with _connect() as conn:
         queued = conn.execute(

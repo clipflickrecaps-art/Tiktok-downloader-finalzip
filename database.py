@@ -120,8 +120,9 @@ def init_db():
                     price         REAL NOT NULL,
                     currency      TEXT NOT NULL DEFAULT 'MMK',
                     is_active     INTEGER NOT NULL DEFAULT 1,
+                    feature_config TEXT NOT NULL DEFAULT '{}',
                     created_at    TEXT NOT NULL,
-                    updated_at   TEXT NOT NULL
+                    updated_at    TEXT NOT NULL
                 )
             """)
             try:
@@ -338,6 +339,7 @@ def _migrate_premium_columns():
         "ALTER TABLE premium ADD COLUMN plan_name  TEXT",
         "ALTER TABLE premium ADD COLUMN granted_by INTEGER",
         "ALTER TABLE premium ADD COLUMN updated_at TEXT",
+        "ALTER TABLE premium ADD COLUMN plan_id INTEGER",
     ]
     try:
         with _connect() as conn:
@@ -346,6 +348,14 @@ def _migrate_premium_columns():
                     conn.execute(stmt)
                 except Exception:
                     pass  # column already exists — safe to ignore
+            for stmt in (
+                "ALTER TABLE premium_plans ADD COLUMN feature_config TEXT NOT NULL DEFAULT '{}'",
+                "ALTER TABLE premium_plans ADD COLUMN deleted_at TEXT",
+            ):
+                try:
+                    conn.execute(stmt)
+                except Exception:
+                    pass
     except Exception as e:
         log.error(f"_migrate_premium_columns failed: {e}")
 

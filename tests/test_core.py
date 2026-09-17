@@ -121,7 +121,7 @@ class CoreTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             with patch.object(database, "DB_FILE", str(Path(tmp) / "bot.db")):
                 database.init_db()
-                plan_id = settings.add_premium_plan("Monthly", 30, 5000, "MMK")
+                plan_id = settings.add_premium_plan("Monthly Pro", 30, 5000, "MMK")
                 self.assertTrue(settings.delete_premium_plan(plan_id))
                 with database._connect() as conn:
                     row = conn.execute("SELECT is_active FROM premium_plans WHERE id = ?", (plan_id,)).fetchone()
@@ -130,10 +130,23 @@ class CoreTests(unittest.TestCase):
                     self.assertIsNotNone(deleted["deleted_at"])
                 self.assertIsNone(settings.toggle_premium_plan(plan_id))
                 self.assertIsNone(settings.create_payment_order(55, plan_id))
-                self.assertTrue(settings.grant_premium_admin(55, 30, "Monthly", 999))
+                self.assertTrue(settings.grant_premium_admin(55, 30, "Monthly Pro", 999, plan_id=plan_id))
                 self.assertTrue(pro.is_pro(55))
                 batch = pro.create_batch(55, ["https://www.tiktok.com/@a/video/2"])
                 self.assertEqual(batch["total"], 1)
+
+    def test_plan_features_can_be_edited(self):
+        import database
+        import settings
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.object(database, "DB_FILE", str(Path(tmp) / "bot.db")):
+                database.init_db()
+                plan_id = settings.add_premium_plan("Custom", 30, 1000, "MMK")
+                self.assertFalse(settings.get_plan_features(plan_id)["bulk_download"])
+                self.assertTrue(settings.update_plan_feature(plan_id, "bulk_download", True))
+                self.assertTrue(settings.update_plan_feature(plan_id, "bulk_limit", 7))
+                self.assertTrue(settings.get_plan_features(plan_id)["bulk_download"])
+                self.assertEqual(settings.get_plan_features(plan_id)["bulk_limit"], 7)
 
     def test_miniapp_origin_and_token_policy(self):
         import miniapp
